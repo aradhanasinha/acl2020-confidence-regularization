@@ -1,6 +1,6 @@
 from os.path import join, dirname
 
-SOURCE_DIR = "/gcs/xcloud-shared/aradhanas/bert/dataset"
+SOURCE_DIR = "/gcs/xcloud-shared/aradhanas/bert/dataset/"
 
 HANS_SOURCE = join(SOURCE_DIR, "hans")
 

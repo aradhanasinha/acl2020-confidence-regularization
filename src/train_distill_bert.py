@@ -134,6 +134,10 @@ def load_hans(n_samples=None,
 
 def ensure_mnli_is_downloaded():
   mnli_source = config.GLUE_SOURCE
+  logging.info(f"[ANUU DEBUG] ensure_mnli_is_downloaded.mnli_source {mnli_source}")
+  logging.info(f"[ANUU DEBUG] ensure_mnli_is_downloaded.mnli_source exists {exists(mnli_source)}")
+  logging.info(f"[ANUU DEBUG] ensure_mnli_is_downloaded.mnli_source os.listdir {os.listdir(mnli_source)}")
+
   if exists(mnli_source) and len(os.listdir(mnli_source)) > 0:
     return
   else:
