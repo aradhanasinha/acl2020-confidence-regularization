@@ -134,9 +134,9 @@ def load_hans(n_samples=None,
 
 def ensure_mnli_is_downloaded():
   mnli_source = config.GLUE_SOURCE
-  logging.info(f"[ANUU DEBUG] ensure_mnli_is_downloaded.mnli_source {mnli_source}")
-  logging.info(f"[ANUU DEBUG] ensure_mnli_is_downloaded.mnli_source exists {exists(mnli_source)}")
-  logging.info(f"[ANUU DEBUG] ensure_mnli_is_downloaded.mnli_source os.listdir {os.listdir(mnli_source)}")
+  logging.warning(f"[ANUU DEBUG] ensure_mnli_is_downloaded.mnli_source {mnli_source}")
+  logging.warning(f"[ANUU DEBUG] ensure_mnli_is_downloaded.mnli_source exists {exists(mnli_source)}")
+  logging.warning(f"[ANUU DEBUG] ensure_mnli_is_downloaded.mnli_source os.listdir {os.listdir(mnli_source)}")
 
   if exists(mnli_source) and len(os.listdir(mnli_source)) > 0:
     return
@@ -590,7 +590,10 @@ def main():
 
   args = parser.parse_args()
 
+
   utils.add_stdout_logger()
+  logging.warning(f"[ANUU DEBUG] args: {args}")
+
 
   if args.mode == "none":
     loss_fn = clf_distill_loss_functions.Plain()
@@ -617,8 +620,10 @@ def main():
       try:
         os.makedirs(output_dir)
       except OSError as e:
+        logging.warning(f"[ANUU DEBUG] OSError: {e}")
         if e.errno == errno.EEXIST:
           print("Directory not created.")
+          logging.warning(f"[ANUU DEBUG] OSError: {e}")
         else:
           raise
 
@@ -660,7 +665,15 @@ def main():
         "Output directory ({}) already exists and is not empty.".format(
             output_dir))
   if not os.path.exists(output_dir):
-    os.makedirs(output_dir)
+    try:
+      os.makedirs(output_dir)
+    except OSError as e:
+      logging.warning(f"[ANUU DEBUG] OSError: {e}")
+      if e.errno == errno.EEXIST:
+        print("Directory not created.")
+        logging.warning(f"[ANUU DEBUG] OSError: {e}")
+      else:
+        raise
 
   # Its way ot easy to forget if this is being set by a command line flag
   if "-uncased" in args.bert_model:
@@ -676,6 +689,7 @@ def main():
   num_train_optimization_steps = None
   train_examples = None
   if args.do_train:
+    logging.warning(f"[ANUU DEBUG] Calling load_mnli")
     train_examples = load_mnli(True, 2000 if args.debug else None)
     num_train_optimization_steps = int(
         len(train_examples) / args.train_batch_size /
