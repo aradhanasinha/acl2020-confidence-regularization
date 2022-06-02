@@ -676,15 +676,16 @@ def main():
         raise
 
   # Its way ot easy to forget if this is being set by a command line flag
-  if "-uncased" in args.bert_model:
+  if "uncased" in args.bert_model:
     do_lower_case = True
-  elif "-cased" in args.bert_model:
+  elif "cased" in args.bert_model:
     do_lower_case = False
   else:
     raise NotImplementedError(args.bert_model)
 
   tokenizer = BertTokenizer.from_pretrained(
       args.bert_model, do_lower_case=do_lower_case)
+  logging.warning(f"[ANUU DEBUG] tokenizer: {tokenizer}")
 
   num_train_optimization_steps = None
   train_examples = None
@@ -702,7 +703,36 @@ def main():
   cache_dir = args.cache_dir if args.cache_dir else os.path.join(
       str(PYTORCH_PRETRAINED_BERT_CACHE), "distributed_{}".format(
           args.local_rank))
+  logging.warning(f"[ANUU DEBUG] cache_dir: {cache_dir}")
 
+  ##### TRYING RUN_GLUE
+  config = AutoConfig.from_pretrained(
+        args.bert_model,
+        num_labels=num_labels,
+        finetuning_task=data_args.task_name,
+        cache_dir=model_args.cache_dir,
+        revision=model_args.model_revision,
+        use_auth_token=True if model_args.use_auth_token else None,
+   )
+  tokenizer = AutoTokenizer.from_pretrained(
+        model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
+        cache_dir=model_args.cache_dir,
+        use_fast=model_args.use_fast_tokenizer,
+        revision=model_args.model_revision,
+        use_auth_token=True if model_args.use_auth_token else None,
+   )
+   model = BertDistill.from_pretrained(
+        model_args.model_name_or_path,
+        from_tf=bool(".ckpt" in model_args.model_name_or_path),
+        config=config,
+        cache_dir=model_args.cache_dir,
+        revision=model_args.model_revision,
+        use_auth_token=True if model_args.use_auth_token else None,
+        ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
+   )
+  # END
+
+  logging.warning(f"[ANUU DEBUG] args.bert_model: {args.bert_model} loading.")
   model = BertDistill.from_pretrained(
       args.bert_model, cache_dir=cache_dir, num_labels=3, loss_fn=loss_fn)
 
