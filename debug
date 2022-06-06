@@ -1,0 +1,20 @@
+Running this command correctly trains:
+python train_distill_bert.py \
+    --output_dir ../checkpoints/hans/bert_confreg_lr5_epoch3_seed444 \
+    --do_train --do_eval --mode smoothed_distill \
+    --seed 444 --which_bias hans
+But this command fails:
+python train_distill_bert.py \
+    --output_dir ../checkpoints/hans/bert_baseline_lr5_epoch3_seed444 \
+    --do_train --do_eval --mode none \
+    --seed 444 --which_bias hans
+With error: 
+Epoch:   0%|                                                                  | 0/3 [00:00<?, ?it/s]/opt/conda/lib/python3.7/site-packages/torch/nn/parallel/_functions.py:61: UserWarning: Was asked to gather along dimension 0, but all input tensors were scalars; will instead unsqueeze and return a vector.
+  warnings.warn('Was asked to gather along dimension 0, but all '
+Traceback (most recent call last):
+  File "train_distill_bert.py", line 998, in <module>
+    main()
+  File "train_distill_bert.py", line 832, in main
+    descript = "loss=%.4f" % (loss_ema / (1 - decay**total_steps))
+TypeError: only size-1 arrays can be converted to Python scalars
+
