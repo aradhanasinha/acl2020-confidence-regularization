@@ -826,10 +826,15 @@ def main():
 
         logits, loss = model(input_ids, segment_ids, input_mask, label_ids,
                              bias, teacher_probs)
+        #logging.warning(f"[ANUU DEBUG] loss {loss}, n_gpu {n_gpu}")
 
         total_steps += 1
         loss_ema = loss_ema * decay + loss.cpu().detach().numpy() * (1 - decay)
-        descript = "loss=%.4f" % (loss_ema / (1 - decay**total_steps))
+        if n_gpu > 1:
+          loss_ema_d = sum(loss_ema)/float(len(loss_ema))
+        else:
+          loss_ema_d = loss_ema
+        descript = "loss=%.4f" % (loss_ema_d / (1 - decay**total_steps))
         pbar.set_description(descript, refresh=False)
 
         if n_gpu > 1:
@@ -879,6 +884,9 @@ def main():
     model = BertDistill(config, num_labels=3, loss_fn=loss_fn)
     model.load_state_dict(torch.load(output_model_file))
   else:
+    output_config_file = os.path.join(output_dir, CONFIG_NAME)
+    config = BertConfig.from_json_file(output_config_file)
+    config = BertConfig.from_json_file(output_config_file)
     output_config_file = os.path.join(output_dir, CONFIG_NAME)
     config = BertConfig.from_json_file(output_config_file)
     output_model_file = os.path.join(output_dir, WEIGHTS_NAME)
@@ -968,15 +976,15 @@ def main():
 
     output_eval_file = os.path.join(output_dir, "eval_%s_results.txt" % name)
     output_all_eval_file = os.path.join(output_dir, "eval_all_results.txt")
-    with open(output_eval_file, "w") as writer, open(output_all_eval_file,
-                                                     "a") as all_writer:
-      logging.info("***** Eval results *****")
-      all_writer.write("eval results on %s:\n" % name)
-      for key in sorted(result.keys()):
-        logging.info("  %s = %s", key, str(result[key]))
-        writer.write("%s = %s\n" % (key, str(result[key])))
-        all_writer.write("%s = %s\n" % (key, str(result[key])))
-
+    
+    with open(output_eval_file, "w") as writer, open(output_all_eval_file, "a") as all_writer:
+        logging.info("***** Eval results *****")
+        all_writer.write("eval results on %s:\n" % name)
+        for key in sorted(result.keys()):
+            logging.info("  %s = %s", key, str(result[key]))
+            writer.write("%s = %s\n" % (key, str(result[key])))
+            all_writer.write("%s = %s\n" % (key, str(result[key])))
+    
     output_answer_file = os.path.join(output_dir, "eval_%s_answers.json" % name)
     answers = {
         ex.example_id: [float(x) for x in p

@@ -7,6 +7,7 @@ from matplotlib import pyplot as plt
 
 from sklearn.manifold import TSNE
 
+DO_DISPLAY = False
 plt.style.use('ggplot')
 NLI_LABELS = ["non_entailment_0", "entailment", "non_entailment_1"]
 NLI_DATASETS = ["HANS", "MNLI_TRAIN", "MNLI_DEV", "MNLI_OVERLAP"]
@@ -52,17 +53,17 @@ def visualize_predictions(all_probs: np.ndarray, all_labels: np.ndarray, conf_pl
 
     objects = ('0.', '0.1', '0.2', '0.3', '0.4', '0.5', '0.6', '0.7', '0.8', '0.9')
     y_pos = np.arange(len(objects))
+    if DO_DISPLAY:
+        plt.bar(y_pos, fracts, align='center', alpha=0.5, label="dataset fraction")
+        plt.bar(y_pos, acc_fracts, align='center', alpha=0.5, label="correctly predicted")
+        plt.xticks(y_pos, objects)
+        plt.ylabel('percentage of dataset')
+        plt.title('predictions confidence plot')
+        plt.legend(loc="upper right", fontsize=12)
 
-    plt.bar(y_pos, fracts, align='center', alpha=0.5, label="dataset fraction")
-    plt.bar(y_pos, acc_fracts, align='center', alpha=0.5, label="correctly predicted")
-    plt.xticks(y_pos, objects)
-    plt.ylabel('percentage of dataset')
-    plt.title('predictions confidence plot')
-    plt.legend(loc="upper right", fontsize=12)
-
-    plt.savefig(conf_plot_file)
-    plt.show()
-    plt.close()
+        plt.savefig(conf_plot_file)
+        plt.show()
+        plt.close()
 
     return sum(ECE_bin), all_bins_acc, all_bins_conf, all_nums
 
