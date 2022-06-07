@@ -24,6 +24,10 @@ class Plain(ClfDistillLossFunction):
     def forward(self, hidden, logits, bias, teacher_probs, labels):
         return F.cross_entropy(logits, labels)
 
+class UniformLabels(ClfDistillLossFunction):
+    def forward(self, hidden, logits, bias, teacher_probs, labels):
+        # Does not care what the labels are. 
+        return F.cross_entropy(logits, labels, label_smoothing=1.0)
 
 class CalibratedPlain(ClfDistillLossFunction):
     def __init__(self):

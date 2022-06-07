@@ -4,16 +4,21 @@ The code is based on previous implementation by Clark et al. (2019)
 https://github.com/chrisc36/debias/tree/master/debias
 
 """
+import torch
+from torch import nn
+from torch.nn import functional as F
 
 import argparse
 import json
 import logging
 import os
 import random
+import nltk
 from collections import namedtuple
 from os.path import join, exists
 from typing import List, Dict, Iterable
 import errno
+from functools import total_ordering
 
 # temporary hack for the pythonroot issue
 import sys
@@ -264,15 +269,33 @@ def load_jsonl(file_path, data_dir, sample=None):
   return out
 
 
-class InputFeatures(object):
-  """A single set of features of data."""
+InputFeature = namedtuple("InputFeature",
+                          ["input_ids", "segment_ids", "label_id"])
 
-  def __init__(self, example_id, input_ids, segment_ids, label_id, bias):
+@total_ordering
+class InputFeatures(object):
+  """A single set of features of data with its augmentations."""
+  ORIGINAL_INPUT = "original_input_feature"
+  SHUFFLED_INPUT = "shuffled_input_feature"
+
+  def __init__(self, example_id, original_input, shuffled_input, bias):
     self.example_id = example_id
-    self.input_ids = input_ids
-    self.segment_ids = segment_ids
-    self.label_id = label_id
+    self.input_features_dict = {
+        self.ORIGINAL_INPUT: original_input,
+        self.SHUFFLED_INPUT: shuffled_input
+    }
     self.bias = bias
+
+  def _get_key(self):
+    """Preserves the original code's key used for sorting this class."""
+    return self.input_features_dict.get(self.ORIGINAL_INPUT).input_ids
+
+  def __eq__(self, other):
+    return self._get_key() == other._get_key()
+
+  def __lt__(self, other):
+    return self._get_key() < other._get_key()
+
 
 
 class ExampleConverter(Processor):
@@ -281,42 +304,66 @@ class ExampleConverter(Processor):
     self.max_seq_length = max_seq_length
     self.tokenizer = tokenizer
 
+  def _get_input_and_segment_ids(self, premise, hypothesis=None):
+    tokens_a = self.tokenizer.tokenize(premise)
+    tokens_b = None
+    if hypothesis:
+      tokens_b = self.tokenizer.tokenize(hypothesis)
+      # Modifies `tokens_a` and `tokens_b` in place so that the total
+      # length is less than the specified length.
+      # Account for [CLS], [SEP], [SEP] with "- 3"
+      _truncate_seq_pair(tokens_a, tokens_b, self.max_seq_length - 3)
+    else:
+      # Account for [CLS] and [SEP] with "- 2"
+      if len(tokens_a) > self.max_seq_length - 2:
+        tokens_a = tokens_a[:(self.max_seq_length - 2)]
+
+    tokens = ["[CLS]"] + tokens_a + ["[SEP]"]
+    segment_ids = [0] * len(tokens)
+    if tokens_b:
+      tokens += tokens_b + ["[SEP]"]
+      segment_ids += [1] * (len(tokens_b) + 1)
+    input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
+    return input_ids, segment_ids
+
+
+  @staticmethod
+  def _shuffle_sentence_like_word_ordering_paper(sentence):
+    if len(nltk.sent_tokenize(sentence)) > 1:
+      return None
+    tokens = nltk.word_tokenize(sentence)
+    if len(tokens) < 3:
+      return None
+    random.Random(10).shuffle(tokens)
+    return " ".join(tokens)
+
+  def create_input_features(self, text_pair_example):
+    original_input_ids, original_segment_ids = self._get_input_and_segment_ids(
+        text_pair_example.premise, text_pair_example.hypothesis)
+    original_input_feature = InputFeature(
+        input_ids=original_input_ids,
+        segment_ids=original_segment_ids,
+        label_id=text_pair_example.id)
+
+    shuffled_hypothesis = ExampleConverter._shuffle_sentence_like_word_ordering_paper(
+        text_pair_example.hypothesis)
+    shuffled_input_ids, shuffled_segment_ids = self._get_input_and_segment_ids(
+        text_pair_example.premise, shuffled_hypothesis)
+    shuffled_input_feature = InputFeature(
+        input_ids=shuffled_input_ids,
+        segment_ids=shuffled_segment_ids,
+        label_id=None)
+
+    return InputFeatures(
+        example_id=text_pair_example.id,
+        original_input=original_input_feature,
+        shuffled_input=shuffled_input_feature,
+        bias=None)
+
   def process(self, data: Iterable):
     features = []
-    tokenizer = self.tokenizer
-    max_seq_length = self.max_seq_length
-
     for example in data:
-      tokens_a = tokenizer.tokenize(example.premise)
-
-      tokens_b = None
-      if example.hypothesis:
-        tokens_b = tokenizer.tokenize(example.hypothesis)
-        # Modifies `tokens_a` and `tokens_b` in place so that the total
-        # length is less than the specified length.
-        # Account for [CLS], [SEP], [SEP] with "- 3"
-        _truncate_seq_pair(tokens_a, tokens_b, max_seq_length - 3)
-      else:
-        # Account for [CLS] and [SEP] with "- 2"
-        if len(tokens_a) > max_seq_length - 2:
-          tokens_a = tokens_a[:(max_seq_length - 2)]
-
-      tokens = ["[CLS]"] + tokens_a + ["[SEP]"]
-      segment_ids = [0] * len(tokens)
-
-      if tokens_b:
-        tokens += tokens_b + ["[SEP]"]
-        segment_ids += [1] * (len(tokens_b) + 1)
-
-      input_ids = tokenizer.convert_tokens_to_ids(tokens)
-
-      features.append(
-          InputFeatures(
-              example_id=example.id,
-              input_ids=np.array(input_ids),
-              segment_ids=np.array(segment_ids),
-              label_id=example.label,
-              bias=None))
+      features.append(self.create_input_features(example))
     return features
 
 
@@ -333,20 +380,33 @@ class InputFeatureDataset(Dataset):
 
 
 def collate_input_features(batch: List[InputFeatures]):
+  #TODO(aradhanas): Update this function.
   max_seq_len = max(len(x.input_ids) for x in batch)
   sz = len(batch)
 
-  input_ids = np.zeros((sz, max_seq_len), np.int64)
-  segment_ids = np.zeros((sz, max_seq_len), np.int64)
-  mask = torch.zeros(sz, max_seq_len, dtype=torch.int64)
-  for i, ex in enumerate(batch):
-    input_ids[i, :len(ex.input_ids)] = ex.input_ids
-    segment_ids[i, :len(ex.segment_ids)] = ex.segment_ids
-    mask[i, :len(ex.input_ids)] = 1
+  input_feature_names = set.intersection(
+      *map(set, [x.input_features_dict for x in batch]))
 
-  input_ids = torch.as_tensor(input_ids)
-  segment_ids = torch.as_tensor(segment_ids)
-  label_ids = torch.as_tensor(np.array([x.label_id for x in batch], np.int64))
+  input_features_collated_dict = {}
+  for input_feature_name in input_feature_names:
+    input_ids = np.zeros((sz, max_seq_len), np.int64)
+    segment_ids = np.zeros((sz, max_seq_len), np.int64)
+    mask = torch.zeros(sz, max_seq_len, dtype=torch.int64)
+    for i, ex in enumerate(batch):
+      input_feature = ex.input_features_dict[input_feature_name]
+      input_ids[i, :len(input_feature.input_ids)] = input_feature.input_ids
+      segment_ids[
+          i, :len(input_feature.segment_ids)] = input_feature.segment_ids
+      mask[i, :len(input_feature.input_ids)] = 1
+
+    input_ids = torch.as_tensor(input_ids)
+    segment_ids = torch.as_tensor(segment_ids)
+    label_ids = torch.as_tensor(
+        np.array(
+            [x.input_features_dict[input_feature_name].label_id for x in batch],
+            np.int64))
+    input_features_collated_dict[
+        input_feature_name] = input_ids, mask, segment_ids, label_ids
 
   # include example ids for test submission
   try:
@@ -355,12 +415,12 @@ def collate_input_features(batch: List[InputFeatures]):
     example_ids = torch.zeros(len(batch)).long()
 
   if batch[0].bias is None:
-    return example_ids, input_ids, mask, segment_ids, label_ids
+    return example_ids, input_features_collated_dict
 
   teacher_probs = torch.tensor([x.teacher_probs for x in batch])
   bias = torch.tensor([x.bias for x in batch])
 
-  return example_ids, input_ids, mask, segment_ids, label_ids, bias, teacher_probs
+  return example_ids, input_features_collated_dict, bias, teacher_probs
 
 
 class SortedBatchSampler(Sampler):
@@ -402,7 +462,7 @@ class SortedBatchSampler(Sampler):
 
 def build_train_dataloader(data: List[InputFeatures], batch_size, seed, sorted):
   if sorted:
-    data.sort(key=lambda x: len(x.input_ids))
+    data.sort()
     ds = InputFeatureDataset(data)
     sampler = SortedBatchSampler(ds, batch_size, seed)
     return DataLoader(
@@ -488,6 +548,11 @@ def main():
       "than this will be padded.")
   parser.add_argument(
       "--do_train", action="store_true", help="Whether to run training.")
+  parser.add_argument(
+      "--uniform_labeling_wt", 
+      default=0,
+      type=float,
+      help="The weight given to the uniform labeling regularization, currently used with shuffled examples.")
   parser.add_argument(
       "--do_eval",
       action="store_true",
@@ -766,6 +831,8 @@ def main():
   tr_loss = 0
 
   if args.do_train:
+    create_shuffled_examples = args.uniform_labeling_wt > 0
+    #TODO(aradhanas): Modify the function below to take in create_shuffled_examples and act on it.
     train_features: List[InputFeatures] = convert_examples_to_features(
         train_examples, args.max_seq_length, tokenizer, args.n_processes)
 
@@ -819,14 +886,29 @@ def main():
       for step, batch in enumerate(pbar):
         batch = tuple(t.to(device) for t in batch)
         if bias_map is not None:
-          example_ids, input_ids, input_mask, segment_ids, label_ids, bias, teacher_probs = batch
+          example_ids, input_features_dict, bias, teacher_probs = batch
+
         else:
           bias = None
-          example_ids, input_ids, input_mask, segment_ids, label_ids = batch
+          example_ids, input_features_dict = batch
+        input_ids, input_mask, segment_ids, label_ids = input_features_dict[
+            InputFeatures.ORIGINAL_INPUT]
 
         logits, loss = model(input_ids, segment_ids, input_mask, label_ids,
                              bias, teacher_probs)
         #logging.warning(f"[ANUU DEBUG] loss {loss}, n_gpu {n_gpu}")
+
+        #TODO(aradhanas): Line below should take in shuffled inputs.
+        if args.uniform_labeling_wt > 0:
+          shuffled_input_ids, shuffled_input_mask, shuffled_segment_ids, _ = input_features_dict[
+              InputFeatures.SHUFFLED_INPUT]
+          shuffled_logits = model(shuffled_input_ids, shuffled_segment_ids,
+                                  shuffled_input_mask, None, bias,
+                                  teacher_probs)
+          uniform_labeling_loss = F.cross_entropy(
+              shuffled_logits, label_ids,
+              label_smoothing=1.0) * args.uniform_labeling_wt
+          loss = torch.add(loss, uniform_labeling_loss)
 
         total_steps += 1
         loss_ema = loss_ema * decay + loss.cpu().detach().numpy() * (1 - decay)
