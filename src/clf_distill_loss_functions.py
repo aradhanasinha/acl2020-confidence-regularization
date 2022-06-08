@@ -5,6 +5,23 @@ from torch.nn import CrossEntropyLoss
 import numpy as np
 import math
 
+class UniformLabelCrossEntropy(nn.Module):
+  """Compute cross entropy loss with uniform labels."""
+
+    def __init__(self, reduction='mean'):
+        super().__init__()
+        self.reduction = reduction
+
+    def reduce_loss(self, loss):
+        return loss.mean() if self.reduction == 'mean' else loss.sum(
+        ) if self.reduction == 'sum' else loss
+
+    def forward(self, preds):
+        n = preds.size()[-1]
+        log_preds = F.log_softmax(preds, dim=-1)
+        loss = self.reduce_loss(-log_preds.sum(dim=-1))
+        return loss / n
+
 
 class ClfDistillLossFunction(nn.Module):
     """Torch classification debiasing loss function"""
@@ -28,6 +45,7 @@ class UniformLabels(ClfDistillLossFunction):
     def forward(self, hidden, logits, bias, teacher_probs, labels):
         # Does not care what the labels are. 
         return F.cross_entropy(logits, labels, label_smoothing=1.0)
+
 
 class CalibratedPlain(ClfDistillLossFunction):
     def __init__(self):

@@ -29,7 +29,7 @@ from pytorch_pretrained_bert.modeling import BertConfig, WEIGHTS_NAME, CONFIG_NA
 from pytorch_pretrained_bert.modeling import BertForSequenceClassification
 from pytorch_pretrained_bert.optimization import BertAdam, warmup_linear
 from pytorch_pretrained_bert.tokenization import BertTokenizer
-from torch.nn import CrossEntropyLoss
+from torch.nn import CrossEntropyLoss, UniformLabelCrossEntropy
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, Dataset, \
     Sampler
 from tqdm import trange, tqdm
@@ -890,16 +890,13 @@ def main():
       nb_tr_examples, nb_tr_steps = 0, 0
       pbar = tqdm(train_dataloader, desc="loss", ncols=100)
       for step, batch in enumerate(pbar):
-        #batch = tuple(t.to(device) for t in batch)
         new_batch = []
         for t in batch:
-            if type(t) is not dict:
-                new_batch.append(t.to(device))
-            else:
-                t_new = {}
-                for k in t.keys():
-                    t_new[k] = [v.to(device) for v in t[k]]
-                new_batch.append(t_new)
+          if isinstance(t, dict):
+            new_batch.append(t.to(device))
+          else:
+            t_new = {k: [v.to(device) for v in t[k]] for k in t.keys()}
+            new_batch.append(t_new)
         batch = tuple(new_batch)
 
         if bias_map is not None:
@@ -915,16 +912,15 @@ def main():
                              bias, teacher_probs)
         #logging.warning(f"[ANUU DEBUG] loss {loss}, n_gpu {n_gpu}")
 
-        #TODO(aradhanas): Line below should take in shuffled inputs.
         if args.uniform_labeling_wt > 0:
           shuffled_input_ids, shuffled_input_mask, shuffled_segment_ids, _ = input_features_dict[
               InputFeatures.SHUFFLED_INPUT]
           shuffled_logits = model(shuffled_input_ids, shuffled_segment_ids,
                                   shuffled_input_mask, None, bias,
                                   teacher_probs)
-          uniform_labeling_loss = F.cross_entropy(
-              shuffled_logits, label_ids,
-              label_smoothing=1.0) * args.uniform_labeling_wt
+          shuffled_loss_module = UniformLabelCrossEntropy()
+          uniform_labeling_loss = shuffled_loss_module(
+              shuffled_logits) * args.uniform_labeling_wt
           loss = torch.add(loss, uniform_labeling_loss)
 
         total_steps += 1
