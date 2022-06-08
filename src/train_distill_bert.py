@@ -44,6 +44,8 @@ from clf_distill_loss_functions import *
 from predictions_analysis import visualize_predictions
 from utils import Processor, process_par
 
+nltk.download('punkt')
+
 HANS_URL = "https://raw.githubusercontent.com/tommccoy1/hans/master/heuristics_evaluation_set.txt"
 
 NLI_LABELS = ["contradiction", "entailment", "neutral"]
@@ -343,7 +345,7 @@ class ExampleConverter(Processor):
     original_input_feature = InputFeature(
         input_ids=original_input_ids,
         segment_ids=original_segment_ids,
-        label_id=text_pair_example.id)
+        label_id=text_pair_example.label)
 
     shuffled_hypothesis = ExampleConverter._shuffle_sentence_like_word_ordering_paper(
         text_pair_example.hypothesis)
@@ -352,7 +354,7 @@ class ExampleConverter(Processor):
     shuffled_input_feature = InputFeature(
         input_ids=shuffled_input_ids,
         segment_ids=shuffled_segment_ids,
-        label_id=None)
+        label_id=-1)
 
     return InputFeatures(
         example_id=text_pair_example.id,
@@ -381,11 +383,15 @@ class InputFeatureDataset(Dataset):
 
 def collate_input_features(batch: List[InputFeatures]):
   #TODO(aradhanas): Update this function.
-  max_seq_len = max(len(x.input_ids) for x in batch)
   sz = len(batch)
 
   input_feature_names = set.intersection(
       *map(set, [x.input_features_dict for x in batch]))
+
+  max_seq_len = 0
+  for input_feature_name in input_feature_names:
+    max_seq_len_feature = max(len(x.input_features_dict[input_feature_name].input_ids) for x in batch)
+    max_seq_len = max(max_seq_len, max_seq_len_feature)
 
   input_features_collated_dict = {}
   for input_feature_name in input_feature_names:
@@ -884,7 +890,18 @@ def main():
       nb_tr_examples, nb_tr_steps = 0, 0
       pbar = tqdm(train_dataloader, desc="loss", ncols=100)
       for step, batch in enumerate(pbar):
-        batch = tuple(t.to(device) for t in batch)
+        #batch = tuple(t.to(device) for t in batch)
+        new_batch = []
+        for t in batch:
+            if type(t) is not dict:
+                new_batch.append(t.to(device))
+            else:
+                t_new = {}
+                for k in t.keys():
+                    t_new[k] = [v.to(device) for v in t[k]]
+                new_batch.append(t_new)
+        batch = tuple(new_batch)
+
         if bias_map is not None:
           example_ids, input_features_dict, bias, teacher_probs = batch
 
