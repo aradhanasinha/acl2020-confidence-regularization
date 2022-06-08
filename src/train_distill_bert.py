@@ -29,7 +29,7 @@ from pytorch_pretrained_bert.modeling import BertConfig, WEIGHTS_NAME, CONFIG_NA
 from pytorch_pretrained_bert.modeling import BertForSequenceClassification
 from pytorch_pretrained_bert.optimization import BertAdam, warmup_linear
 from pytorch_pretrained_bert.tokenization import BertTokenizer
-from torch.nn import CrossEntropyLoss, UniformLabelCrossEntropy
+from torch.nn import CrossEntropyLoss 
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, Dataset, \
     Sampler
 from tqdm import trange, tqdm
@@ -892,7 +892,7 @@ def main():
       for step, batch in enumerate(pbar):
         new_batch = []
         for t in batch:
-          if isinstance(t, dict):
+          if not isinstance(t, dict):
             new_batch.append(t.to(device))
           else:
             t_new = {k: [v.to(device) for v in t[k]] for k in t.keys()}
