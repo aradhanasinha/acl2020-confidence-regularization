@@ -298,7 +298,9 @@ class InputFeatures(object):
   def __lt__(self, other):
     return self._get_key() < other._get_key()
 
-
+  def get_original_label_id(self):
+    return self.input_features_dict[self.ORIGINAL_INPUT].label_id
+    
 
 class ExampleConverter(Processor):
 
@@ -1018,8 +1020,9 @@ def main():
     logging.info("  Batch size = %d", args.eval_batch_size)
     eval_features = convert_examples_to_features(eval_examples,
                                                  args.max_seq_length, tokenizer)
-    eval_features.sort(key=lambda x: len(x.input_ids))
-    all_label_ids = np.array([x.label_id for x in eval_features])
+    #TODO(aradhanas): Update to use the new InputFeatures.
+    eval_features.sort()
+    all_label_ids = np.array([x.get_original_label_id() for x in eval_features])
     eval_dataloader = build_eval_dataloader(eval_features, args.eval_batch_size)
 
     eval_loss = 0
@@ -1027,8 +1030,10 @@ def main():
     probs = []
     test_subm_ids = []
 
-    for example_ids, input_ids, input_mask, segment_ids, label_ids in tqdm(
-        eval_dataloader, desc="Evaluating", ncols=100):
+    for batch in tqdm(eval_dataloader, desc="Evaluating", ncols=100):
+      example_ids, input_features_dict = batch
+      input_ids, input_mask, segment_ids, label_ids = input_features_dict[                                                              InputFeatures.ORIGINAL_INPUT]
+
       input_ids = input_ids.to(device)
       input_mask = input_mask.to(device)
       segment_ids = segment_ids.to(device)
