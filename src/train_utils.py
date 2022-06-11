@@ -48,7 +48,7 @@ class InputFeatures(object):
     return self._get_key() < other._get_key()
 
   def get_original_label_id(self):
-    return self.input_features_dict[self.ORIGINAL_INPUT].label_ids
+    return self.input_features_dict[self.ORIGINAL_INPUT].label_id
 
 def _truncate_seq_pair(tokens_a, tokens_b, max_length):
   """Truncates a sequence pair in place to the maximum length."""

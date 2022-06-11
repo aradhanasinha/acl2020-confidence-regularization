@@ -585,7 +585,7 @@ def main():
     eval_features = convert_examples_to_features(eval_examples,
                                                  args.max_seq_length, tokenizer)
     eval_features.sort()
-    all_label_ids = np.array([x.label_id for x in eval_features])
+    all_label_ids = np.array([x.get_original_label_id() for x in eval_features])
     eval_dataloader = build_eval_dataloader(eval_features, args.eval_batch_size)
 
     eval_loss = 0
