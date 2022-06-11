@@ -51,15 +51,11 @@ from utils import Processor, process_par
 LABEL_MAP = {"SUPPORTS": 0, "REFUTES": 1, "NOT ENOUGH INFO": 2}
 REV_LABEL_MAP = ["SUPPORTS", "REFUTES", "NOT ENOUGH INFO"]
 
-TextPairExample = namedtuple("TextPairExample",
-                             ["id", "hypothesis", "evidence", "label"])
-
-
 def load_fever(data_dir=config.FEVER_SOURCE, split="train", sample=None):
   if split == "train":
-    filename = os.path.join(data_dir, "unique.fever.train.duplicate.jsonl")
+    filename = os.path.join(data_dir, "fever.train.jsonl")
   elif split == "dev":
-    filename = os.path.join(data_dir, "unique.fever.dev.duplicate.jsonl")
+    filename = os.path.join(data_dir, "fever.dev.jsonl")
   elif split == "symmetric_dev":
     filename = os.path.join(data_dir, "fever_symmetric_dev.jsonl")
   elif split == "symmetric_test":
@@ -159,6 +155,9 @@ def main():
       "than this will be padded.")
   parser.add_argument(
       "--do_train", action="store_true", help="Whether to run training.")
+  parser.add_argument(
+      "--uniform_labeling_wt", default=0, type=float,
+      help="The weight given to the uniform labeling regularization, currently used with shuffled examples.")
   parser.add_argument(
       "--do_eval",
       action="store_true",
@@ -480,6 +479,7 @@ def main():
 
         else:
           bias = None
+          teacher_probs = None
           example_ids, input_features_dict = batch
         input_ids, input_mask, segment_ids, label_ids = input_features_dict[
             InputFeatures.ORIGINAL_INPUT]
@@ -584,7 +584,7 @@ def main():
     logging.info("  Batch size = %d", args.eval_batch_size)
     eval_features = convert_examples_to_features(eval_examples,
                                                  args.max_seq_length, tokenizer)
-    eval_features.sort(key=lambda x: len(x.input_ids))
+    eval_features.sort()
     all_label_ids = np.array([x.label_id for x in eval_features])
     eval_dataloader = build_eval_dataloader(eval_features, args.eval_batch_size)
 
