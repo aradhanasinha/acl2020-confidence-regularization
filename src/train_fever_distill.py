@@ -593,8 +593,11 @@ def main():
     probs = []
     test_subm_ids = []
 
-    for example_ids, input_ids, input_mask, segment_ids, label_ids in tqdm(
-        eval_dataloader, desc="Evaluating", ncols=100):
+    for batch in tqdm(eval_dataloader, desc="Evaluating", ncols=100):
+      
+      example_ids, input_features_dict = batch
+      input_ids, input_mask, segment_ids, label_ids = input_features_dict[InputFeatures.ORIGINAL_INPUT]
+        
       input_ids = input_ids.to(device)
       input_mask = input_mask.to(device)
       segment_ids = segment_ids.to(device)
