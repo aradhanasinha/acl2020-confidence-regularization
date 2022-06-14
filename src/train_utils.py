@@ -7,9 +7,12 @@ from functools import total_ordering
 from collections import namedtuple
 from utils import Processor, process_par
 import numpy as np
+import math
 
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, Dataset, \
     Sampler
+
+from sklearn.metrics import f1_score
 
 import nltk
 import torch
@@ -27,15 +30,19 @@ InputFeature = namedtuple("InputFeature",
 class InputFeatures(object):
   """A single set of features of data with its augmentations."""
   ORIGINAL_INPUT = "original_input_feature"
-  SHUFFLED_INPUT = "shuffled_input_feature"
+  SHUFFLED_INPUT_LIST = "shuffled_input_feature_list"
+  TOKEN_DROPOUT_INPUTS_LIST = "token_dropout_input_feature_list"
 
-  def __init__(self, example_id, original_input, shuffled_input, bias):
+  def __init__(self, example_id, original_input, shuffled_input_list,
+               token_dropout_input_list, bias):
     self.example_id = example_id
     self.input_features_dict = {
         self.ORIGINAL_INPUT: original_input,
-        self.SHUFFLED_INPUT: shuffled_input
+        self.SHUFFLED_INPUT_LIST: shuffled_input_list,
+        self.TOKEN_DROPOUT_INPUTS_LIST: token_dropout_input_list
     }
     self.bias = bias
+    self.max_sequence_length = self._compute_max_seq_len()
 
   def _get_key(self):
     """Preserves the original code's key used for sorting this class."""
@@ -49,7 +56,17 @@ class InputFeatures(object):
 
   def get_original_label_id(self):
     return self.input_features_dict[self.ORIGINAL_INPUT].label_id
-
+  
+  def _compute_max_seq_len(self):
+    max_len = 0
+    for x in self.input_features_dict.values():
+      if isinstance(x, InputFeature):
+        max_len = max(max_len, len(x.input_ids))
+      else:
+        # Must be a list of InputFeature objects.
+        max_len = max(max_len, max([len(y.input_ids) for y in x]))
+    return max_len
+    
 def _truncate_seq_pair(tokens_a, tokens_b, max_length):
   """Truncates a sequence pair in place to the maximum length."""
 
@@ -68,9 +85,10 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
 
 class ExampleConverter(Processor):
 
-  def __init__(self, max_seq_length, tokenizer):
+  def __init__(self, max_seq_length, tokenizer, num_of_aug_generated=5):
     self.max_seq_length = max_seq_length
     self.tokenizer = tokenizer
+    self.num_of_aug_generated = num_of_aug_generated
 
   def _get_input_and_segment_ids(self, premise, hypothesis=None):
     tokens_a = self.tokenizer.tokenize(premise)
@@ -94,38 +112,56 @@ class ExampleConverter(Processor):
     input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
     return input_ids, segment_ids
 
+  def _get_input_feature(self, premise, hypothesis, label_id):
+    input_ids, segment_ids = self._get_input_and_segment_ids(
+        premise, hypothesis)
+    return InputFeature(
+        input_ids=input_ids, segment_ids=segment_ids, label_id=label_id)
 
   @staticmethod
-  def _shuffle_sentence_like_word_ordering_paper(sentence):
+  def _shuffle_sentence_like_word_ordering_paper(sentence, random_seed):
     if len(nltk.sent_tokenize(sentence)) > 1:
       return None
     tokens = nltk.word_tokenize(sentence)
     if len(tokens) < 3:
       return None
-    random.Random(10).shuffle(tokens)
+    random.Random(random_seed).shuffle(tokens)
     return " ".join(tokens)
 
-  def create_input_features(self, text_pair_example):
-    original_input_ids, original_segment_ids = self._get_input_and_segment_ids(
-        text_pair_example.premise, text_pair_example.hypothesis)
-    original_input_feature = InputFeature(
-        input_ids=original_input_ids,
-        segment_ids=original_segment_ids,
-        label_id=text_pair_example.label)
+  @staticmethod
+  def _dropout_tokens(sentence, random_seed, dropout_prob=0.10):
+    tokens = nltk.word_tokenize(sentence)
+    num_tokens_to_keep = math.floor((1 - dropout_prob) * len(tokens))
+    indicies_to_keep = random.Random(random_seed).sample(
+        range(len(tokens)), num_tokens_to_keep)
+    tokens_to_keep = [tokens[i] for i in sorted(indicies_to_keep)]
+    return " ".join(tokens_to_keep)
 
-    shuffled_hypothesis = ExampleConverter._shuffle_sentence_like_word_ordering_paper(
-        text_pair_example.hypothesis)
-    shuffled_input_ids, shuffled_segment_ids = self._get_input_and_segment_ids(
-        text_pair_example.premise, shuffled_hypothesis)
-    shuffled_input_feature = InputFeature(
-        input_ids=shuffled_input_ids,
-        segment_ids=shuffled_segment_ids,
-        label_id=-1)
+  def create_input_features(self, text_pair_example):
+    original_input_feature = self._get_input_feature(
+        text_pair_example.premise, text_pair_example.hypothesis,
+        text_pair_example.label)
+
+    def get_aug_input_features_list(hypothesis_aug_fn):
+      augmented_input_feature_list = []
+      for i in range(self.num_of_aug_generated):
+        aug_hypothesis = hypothesis_aug_fn(text_pair_example.hypothesis, i)
+        input_feature = self._get_input_feature(text_pair_example.premise,
+                                                aug_hypothesis,
+                                                text_pair_example.label)
+        augmented_input_feature_list.append(input_feature)
+      return augmented_input_feature_list
+
+    shuffled_input_feature_list = get_aug_input_features_list(
+        ExampleConverter._shuffle_sentence_like_word_ordering_paper)
+    token_dropout_input_feature_list = get_aug_input_features_list(
+        ExampleConverter._dropout_tokens)
 
     return InputFeatures(
         example_id=text_pair_example.id,
         original_input=original_input_feature,
-        shuffled_input=shuffled_input_feature,
+        shuffled_input_list=shuffled_input_feature_list,
+        token_dropout_input_list=token_dropout_input_feature_list,
         bias=None)
 
   def process(self, data: Iterable):
@@ -151,24 +187,28 @@ def collate_input_features(batch: List[InputFeatures]):
   """Collate InputFeatures for batch.
   Returns a list of tensors.
   """
+
   sz = len(batch)
 
   input_feature_names = set.intersection(
       *map(set, [x.input_features_dict for x in batch]))
 
-  max_seq_len = 0
-  for input_feature_name in input_feature_names:
-    max_seq_len_feature = max(
-        len(x.input_features_dict[input_feature_name].input_ids) for x in batch)
-    max_seq_len = max(max_seq_len, max_seq_len_feature)
+  max_seq_len = max(x.max_sequence_length for x in batch)
 
-  input_features_collated_dict = {}
+  input_feature_name_to_count = {}
   for input_feature_name in input_feature_names:
+    if input_feature_name == InputFeatures.ORIGINAL_INPUT:
+      pass
+    count = min(len(x.input_features_dict[input_feature_name]) for x in batch)
+    input_feature_name_to_count[input_feature_name] = count
+
+  def collate_input_feature(get_input_feature_fn):
+    """Fn passed in gets a InputFeature from InputFeatures object."""
     input_ids = np.zeros((sz, max_seq_len), np.int64)
     segment_ids = np.zeros((sz, max_seq_len), np.int64)
     mask = torch.zeros(sz, max_seq_len, dtype=torch.int64)
     for i, ex in enumerate(batch):
-      input_feature = ex.input_features_dict[input_feature_name]
+      input_feature = get_input_feature_fn(ex)
       input_ids[i, :len(input_feature.input_ids)] = input_feature.input_ids
       segment_ids[
           i, :len(input_feature.segment_ids)] = input_feature.segment_ids
@@ -177,11 +217,23 @@ def collate_input_features(batch: List[InputFeatures]):
     input_ids = torch.as_tensor(input_ids)
     segment_ids = torch.as_tensor(segment_ids)
     label_ids = torch.as_tensor(
-        np.array(
-            [x.input_features_dict[input_feature_name].label_id for x in batch],
-            np.int64))
-    input_features_collated_dict[
-        input_feature_name] = input_ids, mask, segment_ids, label_ids
+        np.array([get_input_feature_fn(x).label_id for x in batch], np.int64))
+    return input_ids, mask, segment_ids, label_ids
+
+  input_features_collated_dict = {}
+  for ifn in input_feature_names:
+    if ifn == InputFeatures.ORIGINAL_INPUT:
+      fn = lambda ex: ex.input_features_dict[ifn]
+      input_ids, mask, segment_ids, label_ids = collate_input_feature(fn)
+      input_features_collated_dict[
+          ifn] = input_ids, mask, segment_ids, label_ids
+    else:
+      values = []
+      for i in range(input_feature_name_to_count[ifn]):
+        fn = lambda ex: ex.input_features_dict[ifn][i]
+        input_ids, mask, segment_ids, label_ids = collate_input_feature(fn)
+        values.append((input_ids, mask, segment_ids, label_ids))
+      input_features_collated_dict[ifn] = values
 
   # include example ids for test submission
   try:
@@ -244,8 +296,9 @@ class SortedBatchSampler(Sampler):
     return (len(self.data_source) + self.batch_size - 1) // self.batch_size
 
 
-def build_train_dataloader(data: List[InputFeatures], batch_size, seed, sorted):
-  if sorted:
+def build_train_dataloader(data: List[InputFeatures], batch_size, seed,
+                           do_sort):
+  if do_sort:
     data.sort()
     ds = InputFeatureDataset(data)
     sampler = SortedBatchSampler(ds, batch_size, seed)

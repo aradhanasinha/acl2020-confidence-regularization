@@ -33,7 +33,6 @@ from torch.nn import CrossEntropyLoss
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, Dataset, Sampler
 from tqdm import trange, tqdm
 
-from sklearn.metrics import f1_score
 from sklearn.metrics import confusion_matrix
 
 import config

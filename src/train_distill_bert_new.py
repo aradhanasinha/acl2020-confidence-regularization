@@ -23,9 +23,9 @@ import numpy as np
 from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 from pytorch_pretrained_bert.modeling import BertConfig, WEIGHTS_NAME, CONFIG_NAME
 from pytorch_pretrained_bert.modeling import BertForSequenceClassification
-from pytorch_pretrained_bert.optimization import BertAdam, warmup_linear
+from pytorch_pretrained_bert.optimizaation import BertAdam, warmup_linear
 from pytorch_pretrained_bert.tokenization import BertTokenizer
-from torch.nn import CrossEntropyLoss 
+from torch.nn import CrossEntropyLoss
 from tqdm import trange, tqdm
 
 import config
@@ -36,10 +36,10 @@ from bert_distill import BertDistill
 from clf_distill_loss_functions import *
 
 from train_utils import *
+from contrastive_loss import ContrastiveLoss
 
 from predictions_analysis import visualize_predictions
 from utils import Processor, process_par
-
 
 HANS_URL = "https://raw.githubusercontent.com/tommccoy1/hans/master/heuristics_evaluation_set.txt"
 
@@ -133,9 +133,14 @@ def load_hans(n_samples=None,
 
 def ensure_mnli_is_downloaded():
   mnli_source = config.GLUE_SOURCE
-  logging.warning(f"[ANUU DEBUG] ensure_mnli_is_downloaded.mnli_source {mnli_source}")
-  logging.warning(f"[ANUU DEBUG] ensure_mnli_is_downloaded.mnli_source exists {exists(mnli_source)}")
-  logging.warning(f"[ANUU DEBUG] ensure_mnli_is_downloaded.mnli_source os.listdir {os.listdir(mnli_source)}")
+  logging.warning(
+      f"[ANUU DEBUG] ensure_mnli_is_downloaded.mnli_source {mnli_source}")
+  logging.warning(
+      f"[ANUU DEBUG] ensure_mnli_is_downloaded.mnli_source exists {exists(mnli_source)}"
+  )
+  logging.warning(
+      f"[ANUU DEBUG] ensure_mnli_is_downloaded.mnli_source os.listdir {os.listdir(mnli_source)}"
+  )
 
   if exists(mnli_source) and len(os.listdir(mnli_source)) > 0:
     return
@@ -262,6 +267,7 @@ def load_jsonl(file_path, data_dir, sample=None):
 
   return out
 
+
 def main():
   parser = argparse.ArgumentParser()
 
@@ -296,10 +302,28 @@ def main():
   parser.add_argument(
       "--do_train", action="store_true", help="Whether to run training.")
   parser.add_argument(
-      "--uniform_labeling_wt", 
+      "--uniform_labeling_wt",
       default=0,
       type=float,
-      help="The weight given to the uniform labeling regularization, currently used with shuffled examples.")
+      help="The weight given to the uniform labeling regularization, currently used with shuffled examples."
+  )
+  parser.add_argument(
+      "--contrastive_loss_wt",
+      default=0,
+      type=float,
+      help="The weight given to the contrastive loss fn, currently used with shuffled examples as negatives and dropouts as positives."
+  )
+  parser.add_argument(
+      "--contrastive_loss_temp",
+      default=0,
+      type=float,
+      help="The temperature for the contrastive loss fn."
+  )
+  parser.add_argument(
+      "--use_unpaired_negative_keys",
+      action="store_true",
+      help="Whether the negative examples in the contrastive loss are also including the positive examples for other examples."
+  )
   parser.add_argument(
       "--do_eval",
       action="store_true",
@@ -402,10 +426,8 @@ def main():
 
   args = parser.parse_args()
 
-
   utils.add_stdout_logger()
   logging.warning(f"[ANUU DEBUG] args: {args}")
-
 
   if args.mode == "none":
     loss_fn = clf_distill_loss_functions.Plain()
@@ -654,7 +676,7 @@ def main():
 
         if args.uniform_labeling_wt > 0:
           shuffled_input_ids, shuffled_input_mask, shuffled_segment_ids, _ = input_features_dict[
-              InputFeatures.SHUFFLED_INPUT]
+              InputFeatures.SHUFFLED_INPUT_LIST][0]
           shuffled_logits = model(shuffled_input_ids, shuffled_segment_ids,
                                   shuffled_input_mask, None, bias,
                                   teacher_probs)
@@ -663,10 +685,36 @@ def main():
               shuffled_logits) * args.uniform_labeling_wt
           loss = torch.add(loss, uniform_labeling_loss)
 
+        #TODO(aradhanas): Add this arg and implement.
+        if args.contrastive_loss_wt > 0:
+          anchor_embedding = model.get_embeddings(input_ids, segment_ids,
+                                                  input_mask)
+
+          def get_embedding_list(input_list_name):
+            embedding_list = []
+            for val in input_features_dict[input_list_name]:
+              input_ids, input_mask, segment_ids, _ = val
+              embedding = model.get_embeddings(input_ids, segment_ids,
+                                               input_mask)
+              embedding_list.append(embedding)
+            return embedding_list
+
+          shuffled_embeddings = get_embedding_list(
+              InputFeatures.SHUFFLED_INPUT_LIST)
+          token_drop_embeddings = get_embedding_list(
+              InputFeatures.TOKEN_DROP_INPUT_LIST)
+
+          contrastive_loss_module = ContrastiveLoss(
+              args.contrastive_loss_temp, args.use_unpaired_negative_keys)
+          contrastive_loss = contrastive_loss_module(
+              anchor_embedding, shuffled_embeddings,
+              token_drop_embeddings) * args.contrastive_loss_wt
+          loss = torch.add(loss, contrastive_loss)
+
         total_steps += 1
         loss_ema = loss_ema * decay + loss.cpu().detach().numpy() * (1 - decay)
         if n_gpu > 1:
-          loss_ema_d = sum(loss_ema)/float(len(loss_ema))
+          loss_ema_d = sum(loss_ema) / float(len(loss_ema))
         else:
           loss_ema_d = loss_ema
         descript = "loss=%.4f" % (loss_ema_d / (1 - decay**total_steps))
