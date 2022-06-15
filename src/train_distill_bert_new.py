@@ -23,7 +23,7 @@ import numpy as np
 from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 from pytorch_pretrained_bert.modeling import BertConfig, WEIGHTS_NAME, CONFIG_NAME
 from pytorch_pretrained_bert.modeling import BertForSequenceClassification
-from pytorch_pretrained_bert.optimizaation import BertAdam, warmup_linear
+from pytorch_pretrained_bert.optimization import BertAdam, warmup_linear
 from pytorch_pretrained_bert.tokenization import BertTokenizer
 from torch.nn import CrossEntropyLoss
 from tqdm import trange, tqdm
@@ -657,7 +657,13 @@ def main():
           if not isinstance(t, dict):
             new_batch.append(t.to(device))
           else:
-            t_new = {k: [v.to(device) for v in t[k]] for k in t.keys()}
+            t_new = {}
+            for k in t.keys():
+              if k == InputFeatures.ORIGINAL_INPUT:
+                val = [v.to(device) for v in t[k]]
+              else:
+                val = [[v.to(device) for v in x] for x in t[k]]
+              t_new[k] = val
             new_batch.append(t_new)
         batch = tuple(new_batch)
 
@@ -687,22 +693,22 @@ def main():
 
         #TODO(aradhanas): Add this arg and implement.
         if args.contrastive_loss_wt > 0:
-          anchor_embedding = model.get_embeddings(input_ids, segment_ids,
-                                                  input_mask)
+          anchor_embedding = model(input_ids, segment_ids,
+                                                  input_mask, return_embedding=True)
 
           def get_embedding_list(input_list_name):
             embedding_list = []
             for val in input_features_dict[input_list_name]:
               input_ids, input_mask, segment_ids, _ = val
-              embedding = model.get_embeddings(input_ids, segment_ids,
-                                               input_mask)
+              embedding = model(input_ids, segment_ids,
+                                               input_mask, return_embedding=True)
               embedding_list.append(embedding)
             return embedding_list
 
           shuffled_embeddings = get_embedding_list(
               InputFeatures.SHUFFLED_INPUT_LIST)
           token_drop_embeddings = get_embedding_list(
-              InputFeatures.TOKEN_DROP_INPUT_LIST)
+              InputFeatures.TOKEN_DROPOUT_INPUTS_LIST)
 
           contrastive_loss_module = ContrastiveLoss(
               args.contrastive_loss_temp, args.use_unpaired_negative_keys)

@@ -142,9 +142,11 @@ class ExampleConverter(Processor):
         text_pair_example.premise, text_pair_example.hypothesis,
         text_pair_example.label)
 
-    def get_aug_input_features_list(hypothesis_aug_fn):
+    def get_aug_input_features_list(hypothesis_aug_fn, num_to_generate=None):
+      if num_to_generate is None:
+          num_to_generate = self.num_of_aug_generated
       augmented_input_feature_list = []
-      for i in range(self.num_of_aug_generated):
+      for i in range(num_to_generate):
         aug_hypothesis = hypothesis_aug_fn(text_pair_example.hypothesis, i)
         input_feature = self._get_input_feature(text_pair_example.premise,
                                                 aug_hypothesis,
@@ -155,7 +157,7 @@ class ExampleConverter(Processor):
     shuffled_input_feature_list = get_aug_input_features_list(
         ExampleConverter._shuffle_sentence_like_word_ordering_paper)
     token_dropout_input_feature_list = get_aug_input_features_list(
-        ExampleConverter._dropout_tokens)
+        ExampleConverter._dropout_tokens, 1)
 
     return InputFeatures(
         example_id=text_pair_example.id,

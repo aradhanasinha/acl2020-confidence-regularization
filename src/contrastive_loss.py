@@ -50,13 +50,9 @@ class ContrastiveLoss(nn.Module):
     positive_embedding = reshape_embedding(token_drop_embeddings_list[0])
 
     negative_embeddings = [
-        reshape_embedding(x) for x in shuffled_embeddings_list
-    ]
-    negative_embedding_tensor = torch.Tensor(
-        len(negative_embeddings), *positive_embedding.shape)
-    torch.cat(negative_embeddings, out=negative_embedding_tensor)  # (M, N, D)
-    negative_embedding_tensor = negative_embedding_tensor.transpose(
-        0, 1)  # (N, M, D)
+        reshape_embedding(x).unsqueeze(1) for x in shuffled_embeddings_list
+        ] # Each item in list: (N, 1, D)
+    negative_embedding_tensor =  torch.cat(negative_embeddings, dim=1)  # (N, M, D)
 
     return contrastive_loss(
         anchor_embedding,
