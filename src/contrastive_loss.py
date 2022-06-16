@@ -20,17 +20,18 @@ class ContrastiveLoss(nn.Module):
 
   def __init__(self,
                temperature=0.1,
-               use_unpaired_negative_keys=True, 
+               use_unpaired_negative_keys=True,
                reduction='mean',):
     super().__init__()
     self.temperature = temperature
     self.reduction = reduction
     self.use_unpaired_negative_keys = use_unpaired_negative_keys
 
-  def forward(self, anchor_embedding, shuffled_embeddings_list,
+  def forward(self, label_ids, anchor_embedding, shuffled_embeddings_list,
               token_drop_embeddings_list):
     """
     Args:
+      label_ids: label ides (len N)
       anchor_embedding: batch embeddings (len N)
       shuffled_embeddings_list: each item in the list are shuffled embeddings
         for the entire batch (len N). The length of the shuffled embeddings is
@@ -51,10 +52,12 @@ class ContrastiveLoss(nn.Module):
 
     negative_embeddings = [
         reshape_embedding(x).unsqueeze(1) for x in shuffled_embeddings_list
-        ] # Each item in list: (N, 1, D)
-    negative_embedding_tensor =  torch.cat(negative_embeddings, dim=1)  # (N, M, D)
+    ]  # Each item in list: (N, 1, D)
+    negative_embedding_tensor = torch.cat(
+        negative_embeddings, dim=1)  # (N, M, D)
 
     return contrastive_loss(
+        label_ids,
         anchor_embedding,
         positive_embedding,
         negative_embedding_tensor,
@@ -63,7 +66,8 @@ class ContrastiveLoss(nn.Module):
         reduction=self.reduction)
 
 
-def contrastive_loss(anchor,
+def contrastive_loss(label_ids,
+                     anchor,
                      positive_key,
                      negative_keys_paired=None,
                      use_unpaired_negative_keys=True,
@@ -82,6 +86,7 @@ def contrastive_loss(anchor,
         https://arxiv.org/abs/1807.03748v2
         https://arxiv.org/abs/2010.05113
     Args:
+        label_ids: Labels for examples.
         temperature: Logits are divided by temperature before calculating the
           cross entropy.
         reduction: Reduction method applied to the output. Value must be one of
@@ -106,10 +111,7 @@ def contrastive_loss(anchor,
         examples are speficied (use_unpaired_negative_keys is False and 
         negative_keys_paired is None)
   """
-  check_input_dimensions(
-      anchor=anchor,
-      positive_key=positive_key,
-      negative_keys_paired=negative_keys_paired)
+  check_input_dimensions(anchor, positive_key, negative_keys_paired)
   if negative_keys_paired is None and not use_unpaired_negative_keys:
     raise ValueError('Need negative examples: paired, unpaired or both.')
 
@@ -146,7 +148,7 @@ def contrastive_loss(anchor,
       logits = torch.cat([logits, negative_logits], dim=1)
 
     # Positive keys are the entries on the diagonal
-    labels = torch.arange(len(anchor), device=anchor.device)
+    labels = label_ids
 
   return F.cross_entropy(logits / temperature, labels, reduction=reduction)
 
