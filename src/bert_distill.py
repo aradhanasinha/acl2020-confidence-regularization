@@ -46,7 +46,7 @@ class BertDistill(BertPreTrainedModel):
                    input_ids,
                    token_type_ids=None,
                    attention_mask=None,
-                   embedding_type="second_last_hidden"):
+                   embedding_type="last_hidden"):
     hidden_states, _ = self.bert(
       input_ids=input_ids,
       token_type_ids=token_type_ids,
