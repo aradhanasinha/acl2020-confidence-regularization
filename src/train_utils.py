@@ -180,16 +180,16 @@ class ExampleConverter(Processor):
 
     def get_aughyp_input_features_list(hypothesis_aug_fn, num_to_generate=None):
       def aug_fn(text_pair_example, i):
-        aug_hypothesis = hypothesis_aug_fn(text_pair_example.hypothesis, i)
-        TextPairExample(text_pair_example.id, text_pair_example.premise,
+        aug_hypothesis = hypothesis_aug_fn(text_pair_example, i)
+        return TextPairExample(text_pair_example.id, text_pair_example.premise,
                         aug_hypothesis, text_pair_example.label)
       return self.get_aug_input_features_list(text_pair_example, aug_fn,
                                               num_to_generate)
 
     def get_augprem_input_features_list(premise_aug_fn, num_to_generate=None):
       def aug_fn(text_pair_example, i):
-        aug_premise = premise_aug_fn(text_pair_example.premise, i)
-        TextPairExample(text_pair_example.id, aug_premise,
+        aug_premise = premise_aug_fn(text_pair_example, i)
+        return TextPairExample(text_pair_example.id, aug_premise,
                         text_pair_example.hypothesis, text_pair_example.label)
       return self.get_aug_input_features_list(text_pair_example, aug_fn,
                                               num_to_generate)
@@ -199,7 +199,7 @@ class ExampleConverter(Processor):
     shuffled_input_feature_list = get_aughyp_input_features_list(
         ExampleConverter._shuffle_hyp_but_keep_mutual_phrases,
         half) + get_augprem_input_features_list(
-            ExampleConverter._shuffle_prem_but_keep_mutual_phrases, other_half)
+            ExampleConverter._shuffle_premise_but_keep_mutual_phrases, other_half)
 
     token_dropout_input_feature_list = get_aughyp_input_features_list(
         ExampleConverter._identity, 1)
