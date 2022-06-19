@@ -134,7 +134,7 @@ class ExampleConverter(Processor):
     num_tokens_to_keep = math.floor((1 - dropout_prob) * len(tokens))
     indicies_to_keep = random.Random(random_seed).sample(
         range(len(tokens)), num_tokens_to_keep)
-    tokens_to_keep = [tokens[i] for i in sorted(indicies_to_keep)]
+    tokens_to_keep = tokens #[tokens[i] for i in sorted(indicies_to_keep)]
     return " ".join(tokens_to_keep)
 
   def create_input_features(self, text_pair_example):
