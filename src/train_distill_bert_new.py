@@ -325,6 +325,11 @@ def main():
       help="Whether the negative examples in the contrastive loss are also including the positive examples for other examples."
   )
   parser.add_argument(
+      "--use_paired_negative_keys",
+      action="store_true",
+      help="Whether the negative examples in the contrastive loss are also including the positive examples for other examples."
+  )
+  parser.add_argument(
       "--do_eval",
       action="store_true",
       help="Whether to run eval on the dev set.")
@@ -693,15 +698,15 @@ def main():
 
         #TODO(aradhanas): Add this arg and implement.
         if args.contrastive_loss_wt > 0:
-          anchor_embedding = model(input_ids, segment_ids,
-                                                  input_mask, return_embedding=True)
+          anchor_embedding = model(
+              input_ids, segment_ids, input_mask, return_embedding=True)
 
           def get_embedding_list(input_list_name):
             embedding_list = []
             for val in input_features_dict[input_list_name]:
               input_ids, input_mask, segment_ids, _ = val
-              embedding = model(input_ids, segment_ids,
-                                               input_mask, return_embedding=True)
+              embedding = model(
+                  input_ids, segment_ids, input_mask, return_embedding=True)
               embedding_list.append(embedding)
             return embedding_list
 
@@ -713,7 +718,8 @@ def main():
           contrastive_loss_module = ContrastiveLoss(
               args.contrastive_loss_temp, args.use_unpaired_negative_keys)
           contrastive_loss = contrastive_loss_module(
-              anchor_embedding, shuffled_embeddings,
+              label_ids, anchor_embedding,
+              shuffled_embeddings if args.use_paired_negative_keys else None,
               token_drop_embeddings) * args.contrastive_loss_wt
           loss = torch.add(loss, contrastive_loss)
 
