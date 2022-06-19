@@ -29,7 +29,7 @@ class BertDistill(BertPreTrainedModel):
               return_embedding=False):
 
     if return_embedding:
-        return self.get_embeddings(input_ids, token_type_ids, attention_mask)
+      return self.get_embeddings(input_ids, token_type_ids, attention_mask)
     _, pooled_output = self.bert(
         input_ids,
         token_type_ids,
@@ -43,14 +43,14 @@ class BertDistill(BertPreTrainedModel):
     return logits, loss
 
   def get_embeddings(self,
-                   input_ids,
-                   token_type_ids=None,
-                   attention_mask=None,
-                   embedding_type="second_last_hidden"):
+                     input_ids,
+                     token_type_ids=None,
+                     attention_mask=None,
+                     embedding_type="last_hidden"):
     hidden_states, _ = self.bert(
-      input_ids=input_ids,
-      token_type_ids=token_type_ids,
-      attention_mask=attention_mask)
+        input_ids=input_ids,
+        token_type_ids=token_type_ids,
+        attention_mask=attention_mask)
 
     if embedding_type == "last_hidden":
       return hidden_states[-1]

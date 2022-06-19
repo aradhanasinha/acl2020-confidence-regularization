@@ -6,6 +6,7 @@ https://github.com/chrisc36/debias/tree/master/debias
 """
 import torch
 from torch import nn
+import pandas as pd
 
 import argparse
 import json
@@ -15,6 +16,7 @@ import random
 from os.path import join, exists
 from typing import List, Dict, Iterable
 import errno
+from visualize_embeddings import reduce_embedding_dimensions, visualize, visualize_augmentations
 
 # temporary hack for the pythonroot issue
 import sys
@@ -317,8 +319,7 @@ def main():
       "--contrastive_loss_temp",
       default=0,
       type=float,
-      help="The temperature for the contrastive loss fn."
-  )
+      help="The temperature for the contrastive loss fn.")
   parser.add_argument(
       "--use_unpaired_negative_keys",
       action="store_true",
@@ -333,6 +334,10 @@ def main():
       "--do_eval",
       action="store_true",
       help="Whether to run eval on the dev set.")
+  parser.add_argument(
+      "--do_viz",
+      action="store_true",
+      help="Whether to visualize the embeddings.")
   parser.add_argument(
       "--do_test",
       action="store_true",
@@ -827,11 +832,23 @@ def main():
     nb_eval_steps = 0
     probs = []
     test_subm_ids = []
+    
+    if args.do_viz:
+      # Lists to store reduced embeddigngs to visualize.
+      original_reduced_embed_dfs = []
+      dropout_reduced_embed_dfs = []
+      shuffled_reduced_embed_dfs = []
 
     for batch in tqdm(eval_dataloader, desc="Evaluating", ncols=100):
       example_ids, input_features_dict = batch
       input_ids, input_mask, segment_ids, label_ids = input_features_dict[
           InputFeatures.ORIGINAL_INPUT]
+
+      if args.do_viz:
+        dropout_input_ids, dropout_input_mask, dropout_segment_ids, _ = input_features_dict[
+            InputFeatures.TOKEN_DROPOUT_INPUTS_LIST][0]
+        shuffled_input_ids, shuffled_input_mask, shuffled_segment_ids, _ = input_features_dict[
+            InputFeatures.SHUFFLED_INPUT_LIST][0]
 
       input_ids = input_ids.to(device)
       input_mask = input_mask.to(device)
@@ -841,7 +858,28 @@ def main():
       with torch.no_grad():
         logits = model(input_ids, segment_ids, input_mask)
 
-      # create eval loss and other metric required by the task
+        # Compute reduced dimension embeddigngs.
+        if args.do_viz:
+          embedding = model(
+              input_ids, segment_ids, input_mask, return_embedding=True)
+          original_reduced_embed_dfs.append(
+              reduce_embedding_dimensions(embedding, input_mask, label_ids))
+          dropout_embedding = model(
+              dropout_input_ids,
+              dropout_segment_ids,
+              dropout_input_mask,
+              return_embedding=True)
+          dropout_reduced_embed_dfs.append(dropout_embedding,
+                                           dropout_input_mask, label_ids)
+          shuffled_embedding = model(
+              shuffled_input_ids,
+              shuffled_segment_ids,
+              shuffled_input_mask,
+              return_embedding=True)
+          shuffled_reduced_embed_dfs.append(shuffled_embedding,
+                                            shuffled_input_mask, label_ids)
+
+      # Create eval loss and other metric required by the task.
       loss_fct = CrossEntropyLoss()
       tmp_eval_loss = loss_fct(logits.view(-1, 3), label_ids.view(-1))
 
@@ -861,6 +899,19 @@ def main():
       probs = probs[:, :2]
 
     preds = np.argmax(probs, axis=1)
+
+    # Collate dfs and visualize.
+    if args.do_viz:
+      original_reduced_embed_df = pd.concat(
+          original_reduced_embed_dfs, ignore_index=True)
+      visualize(original_reduced_embed_df, output_dir, name)
+      dropout_reduced_embed_df = pd.concat(
+          dropout_reduced_embed_dfs, ignore_index=True)
+      shuffled_reduced_embed_df = pd.concat(
+          shuffled_reduced_embed_dfs, ignore_index=True)
+      visualize_augmentations(original_reduced_embed_df,
+                              dropout_reduced_embed_df,
+                              shuffled_reduced_embed_df, output_dir, name)
 
     result = {"acc": simple_accuracy(preds, all_label_ids)}
     result["loss"] = eval_loss
