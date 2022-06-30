@@ -52,8 +52,6 @@ class BertDistill(BertPreTrainedModel):
         input_ids=input_ids,
         token_type_ids=token_type_ids,
         attention_mask=attention_mask)
-    print("HIDDEN STATES", hidden_states)
-    assert 1==2
 
     if embedding_type == "last_hidden":
       return hidden_states[-1]
