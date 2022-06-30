@@ -737,9 +737,8 @@ def main():
 
         # Loss EMAs (not used for training.)
         def get_updated_loss_ema(new_loss, loss_ema):
-          return loss_ema * decay + new_loss.cpu().detach().numpy() * (
-              1 - decay)
-        loss_ema = get_updated_loss_ema(loss, loss_ema)
+          return loss_ema * decay + new_loss * (1 - decay)
+        loss_ema = get_updated_loss_ema(loss.cpu().detach().numpy(), loss_ema)
         contrastive_loss_ema = get_updated_loss_ema(contrastive_loss,
                                                     contrastive_loss_ema)
         uniform_loss_ema = get_updated_loss_ema(uniform_labeling_loss,
@@ -802,7 +801,7 @@ def main():
       header = "Epoch, Step, CE_loss, Contrastive_loss, Uniform_labeling_loss"
       f.write(header)
       for entry in training_losses:
-        f.write(",".join(entry))
+        f.write(",".join([str(e) for e in entry])+ "\n")
 
     # Record the args as well
     arg_dict = {}
