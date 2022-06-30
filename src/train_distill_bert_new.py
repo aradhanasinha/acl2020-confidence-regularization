@@ -654,10 +654,13 @@ def main():
 
     model.train()
     loss_ema = 0
+    uniform_loss_ema = 0
+    contrastive_loss_ema = 0
     total_steps = 0
     decay = 0.99
 
-    for _ in trange(int(args.num_train_epochs), desc="Epoch", ncols=100):
+    training_losses = []
+    for epoch_index in trange(int(args.num_train_epochs), desc="Epoch", ncols=100):
       tr_loss = 0
       nb_tr_examples, nb_tr_steps = 0, 0
       pbar = tqdm(train_dataloader, desc="loss", ncols=100)
@@ -699,7 +702,8 @@ def main():
           shuffled_loss_module = UniformLabelCrossEntropy()
           uniform_labeling_loss = shuffled_loss_module(
               shuffled_logits) * args.uniform_labeling_wt
-          loss = torch.add(loss, uniform_labeling_loss)
+        else:
+          uniform_labeling_loss = 0
 
         #TODO(aradhanas): Add this arg and implement.
         if args.contrastive_loss_wt > 0:
@@ -726,19 +730,41 @@ def main():
               label_ids, anchor_embedding,
               shuffled_embeddings if args.use_paired_negative_keys else None,
               token_drop_embeddings) * args.contrastive_loss_wt
-          loss = torch.add(loss, contrastive_loss)
+        else:
+          contrastive_loss = 0
 
         total_steps += 1
-        loss_ema = loss_ema * decay + loss.cpu().detach().numpy() * (1 - decay)
+
+        # Loss EMAs (not used for training.)
+        def get_updated_loss_ema(new_loss, loss_ema):
+          return loss_ema * decay + new_loss.cpu().detach().numpy() * (
+              1 - decay)
+        loss_ema = get_updated_loss_ema(loss, loss_ema)
+        contrastive_loss_ema = get_updated_loss_ema(contrastive_loss,
+                                                    contrastive_loss_ema)
+        uniform_loss_ema = get_updated_loss_ema(uniform_labeling_loss,
+                                                uniform_loss_ema)
         if n_gpu > 1:
           loss_ema_d = sum(loss_ema) / float(len(loss_ema))
         else:
           loss_ema_d = loss_ema
-        descript = "loss=%.4f" % (loss_ema_d / (1 - decay**total_steps))
-        pbar.set_description(descript, refresh=False)
+        # Get description with EMAs
+        get_decay_loss = lambda loss_ema: loss_ema / (1 - decay**total_steps)
+        descrip = f"EMA:loss={get_decay_loss(loss_ema_d):.{4}f}"
+        if args.contrastive_loss_wt > 0:
+          descrip = descrip + f",cl={get_decay_loss(contrastive_loss_ema):.{4}f}"
+        if args.uniform_labeling_wt > 0:
+          descrip = descrip + f",ul={get_decay_loss(uniform_loss_ema):.{4}f}"
+        pbar.set_description(descrip, refresh=False)
 
+        # Get losses used for training.
         if n_gpu > 1:
           loss = loss.mean()  # mean() to average on multi-gpu.
+        loss = torch.add(loss, contrastive_loss)
+        loss = torch.add(loss, uniform_labeling_loss)
+        training_losses.append(
+            [epoch_index, step, loss, contrastive_loss, uniform_labeling_loss])
+
         if args.gradient_accumulation_steps > 1:
           loss = loss / args.gradient_accumulation_steps
 
@@ -771,6 +797,12 @@ def main():
     output_config_file = os.path.join(output_dir, CONFIG_NAME)
     with open(output_config_file, "w") as f:
       f.write(model_to_save.config.to_json_string())
+    output_train_loss_file = os.path.join(output_dir, "training_loss_over_time")
+    with open(output_train_loss_file, "w") as f:
+      header = "Epoch, Step, CE_loss, Contrastive_loss, Uniform_labeling_loss"
+      f.write(header)
+      for entry in training_losses:
+        f.write(",".join(entry))
 
     # Record the args as well
     arg_dict = {}

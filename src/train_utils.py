@@ -57,7 +57,7 @@ class InputFeatures(object):
 
   def get_original_label_id(self):
     return self.input_features_dict[self.ORIGINAL_INPUT].label_id
-  
+
   def _compute_max_seq_len(self):
     max_len = 0
     for x in self.input_features_dict.values():
@@ -67,7 +67,7 @@ class InputFeatures(object):
         # Must be a list of InputFeature objects.
         max_len = max(max_len, max([len(y.input_ids) for y in x]))
     return max_len
-    
+
 def _truncate_seq_pair(tokens_a, tokens_b, max_length):
   """Truncates a sequence pair in place to the maximum length."""
 

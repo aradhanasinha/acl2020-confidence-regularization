@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
+import math
 
 class ContrastiveLoss(nn.Module):
   """
@@ -31,7 +32,7 @@ class ContrastiveLoss(nn.Module):
               token_drop_embeddings_list):
     """
     Args:
-      label_ids: label ides (len N)
+      label_ids: label ids tensor (len N)
       anchor_embedding: batch embeddings (len N)
       shuffled_embeddings_list: each item in the list are shuffled embeddings
         for the entire batch (len N). The length of the shuffled embeddings is
@@ -86,7 +87,7 @@ def contrastive_loss(label_ids,
         https://arxiv.org/abs/1807.03748v2
         https://arxiv.org/abs/2010.05113
     Args:
-        label_ids: Labels for examples.
+        label_ids: Labels for examples. Only needed if use_unpaired_negative_keys.
         temperature: Logits are divided by temperature before calculating the
           cross entropy.
         reduction: Reduction method applied to the output. Value must be one of
@@ -114,6 +115,8 @@ def contrastive_loss(label_ids,
   check_input_dimensions(anchor, positive_key, negative_keys_paired)
   if negative_keys_paired is None and not use_unpaired_negative_keys:
     raise ValueError('Need negative examples: paired, unpaired or both.')
+  if use_unpaired_negative_keys and not label_ids:
+    raise ValueError('Need label_ids to implement unpaired negative keys')
 
   # Normalize D length embeddigngs to unit vectors, so we can dot product away.
   anchor, positive_key, negative_keys_paired = normalize_last_dim(
@@ -137,25 +140,30 @@ def contrastive_loss(label_ids,
     # Correct label is at the 0th index always
     labels = torch.zeros(len(logits), dtype=torch.long, device=anchor.device)
   else:
-    # Negative keys are implicitly off-diagonal positive keys.
-
     # Cosine between all combinations
     # (N, N) <-- (N, D) * (D, N) (positive on diagonal)
     logits = anchor @ transpose_last_two_dim(positive_key)
 
+    # Positive keys are the entries on the diagonal
+    # And also the keys that share the same label.
+    labels = torch.zeros(len(label_ids), len(label_ids))
+    for label in label_ids.unique():
+      examples_with_label = (label_ids == label).int()
+      labels += examples_with_label.unsqueeze(1) * examples_with_label
+
     if negative_keys_paired is not None:
       # (N, N + M)  <-- [logits, negative]
       logits = torch.cat([logits, negative_logits], dim=1)
+      labels = torch.cat([labels, torch.zeros(negative_logits.size())], dim=1)
 
-    # Positive keys are the entries on the diagonal
-    labels = label_ids
+  ce = F.cross_entropy(logits / temperature, labels.long(), reduction=reduction)
+  return math.log(math.exp(ce) - 1)
+  # Cross entropy includes the denominator and numerator of the contrastive Loss
+  # in it's denominator, so this transform is to remove items from the same 
+  # class from the denominator.
 
-  return F.cross_entropy(logits / temperature, labels, reduction=reduction)
 
-
-def check_input_dimensions(anchor,
-                           positive_key,
-                           negative_keys_paired=None):
+def check_input_dimensions(anchor, positive_key, negative_keys_paired=None):
   """Check input dimensionality."""
   if anchor.dim() != 2:
     raise ValueError('<anchor> must have 2 dimensions.')
