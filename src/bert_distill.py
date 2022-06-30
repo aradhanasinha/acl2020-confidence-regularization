@@ -12,6 +12,7 @@ class BertDistill(BertPreTrainedModel):
     self.num_labels = num_labels
     self.loss_fn = loss_fn
 
+    config.output_hidden_states = True
     print(config)
     model = BertModel(config)
     self.bert = model
@@ -51,6 +52,8 @@ class BertDistill(BertPreTrainedModel):
         input_ids=input_ids,
         token_type_ids=token_type_ids,
         attention_mask=attention_mask)
+    print("HIDDEN STATES", hidden_states)
+    assert 1==2
 
     if embedding_type == "last_hidden":
       return hidden_states[-1]

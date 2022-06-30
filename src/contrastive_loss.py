@@ -156,8 +156,10 @@ def contrastive_loss(label_ids,
       logits = torch.cat([logits, negative_logits], dim=1)
       labels = torch.cat([labels, torch.zeros(negative_logits.size())], dim=1)
 
-  ce = F.cross_entropy(logits / temperature, labels.long(), reduction=reduction)
-  return math.log(math.exp(ce) - 1)
+
+  ce = F.cross_entropy(torch.divide(logits,temperature), labels.long(), reduction=reduction)
+  ans =  torch.log(torch.sub(torch.exp(ce),1))
+  return ans
   # Cross entropy includes the denominator and numerator of the contrastive Loss
   # in it's denominator, so this transform is to remove items from the same 
   # class from the denominator.
