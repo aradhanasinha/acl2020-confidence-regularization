@@ -144,6 +144,32 @@ class InputFeatures(object):
 
     return InputFeatures(example_id, input_features_dict[InputFeatures.ORIGINAL_INPUT], input_features_dict[InputFeatures.SHUFFLED_INPUT_LIST], input_features_dict[InputFeatures.TOKEN_DROPOUT_INPUTS_LIST], bias)
 
+  ensure_mnli_is_downloaded()
+  if is_train:
+    filename = join(config.GLUE_SOURCE, "train.tsv")
+  else:
+    if custom_path is None:
+      filename = join(config.GLUE_SOURCE, "dev_matched.tsv")
+    else:
+      filename = join(config.GLUE_SOURCE, custom_path)
+
+  logging.info("Loading mnli " + ("train" if is_train else "dev"))
+  with open(filename) as f:
+    f.readline()
+    lines = f.readlines()
+
+  if sample:
+    lines = np.random.RandomState(26096781 + sample).choice(
+        lines, sample, replace=False)
+
+  out = []
+  for line in lines:
+    line = line.split("\t")
+    out.append(
+        TextPairExample(line[0], line[8], line[9],
+                        NLI_LABEL_MAP[line[-1].rstrip()]))
+  return out
+
 def _truncate_seq_pair(tokens_a, tokens_b, max_length):
   """Truncates a sequence pair in place to the maximum length."""
 

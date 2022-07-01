@@ -7,7 +7,7 @@ https://github.com/chrisc36/debias/tree/master/debias
 import torch
 from torch import nn
 import pandas as pd
-
+import ast
 import argparse
 import json
 import logging
@@ -168,30 +168,29 @@ def load_mnli(is_train, sample=None, custom_path=None) -> List[TextPairExample]:
                         NLI_LABEL_MAP[line[-1].rstrip()]))
   return out
 
-def get_mnli_tf_path(is_train, custom_path=None):
+def get_mnli_tf_path(output_dir, is_train, custom_path=None):
   if is_train:
     file_name = "train"
   elif custom_path is None:
     file_name = "dev_matched"
   else:
     file_name = custom_path
-  return os.path.join(args.output_dir, f"{file_name}.input_features")
+  return os.path.join(output_dir, f"{file_name}.input_features")
 
-
-def save_mnli_train_features(train_features, is_train, custom_path=None):
-  output_path = get_mnli_tf_path(is_train, custom_path)
-  with open(output_train_examples, "w") as f:
+def save_mnli_train_features(output_dir, train_features, is_train, custom_path=None):
+  output_path = get_mnli_tf_path(output_dir, is_train, custom_path)
+  with open(output_path, "w") as f:
     for t in train_features:
       f.write(str(t)+"\n")
   logging.info(f"Saved train_features: {output_path}")
   return
     
-def load_mnli_train_features(is_train, sample=None, custom_path=None) -> List[InputFeatures]:
-  output_path = get_mnli_tf_path(is_train, custom_path)
+def load_mnli_train_features(output_dir, is_train, sample=None, custom_path=None) -> List[InputFeatures]:
+  output_path = get_mnli_tf_path(output_dir, is_train, custom_path)
   if not exists(output_path):
     return None
   lines = []
-  with open(output_train_examples, "r") as f:
+  with open(output_path, "r") as f:
     for line in f:
       lines.append(line.strip())
 
@@ -492,10 +491,9 @@ def main():
       try:
         os.makedirs(output_dir)
       except OSError as e:
-        logging.warning(f"[ANUU DEBUG] OSError: {e}")
+        logging.warning(f"OSError: {e}")
         if e.errno == errno.EEXIST:
           print("Directory not created.")
-          logging.warning(f"[ANUU DEBUG] OSError: {e}")
         else:
           raise
 
@@ -582,6 +580,42 @@ def main():
     model.load_state_dict(torch.load(output_model_file))
     return model
 
+  def try_load_latest_saved_model(args_output_dir):
+    logging.info("***** Trying to load saved model. *****")
+
+    def try_load_from_dir(save_dir):
+      logging.info("Trying save file: {save_dir}")
+      if exists(save_dir):
+        logging.info("\tDirectory exists.")
+        try:
+          model = load_saved_model(save_dir)
+          logging.info("\tSuccessfully loaded model. Yay.")
+
+          output_current_step = os.path.join(save_dir, "current_step")
+          epoch, step = [0, 0]
+          with open(output_current_step, "w") as f:
+            f.readline()
+            epoch, step = ast.literal_eval(f.readline().strip())
+          logging.info(f"\tEpoch: {epoch}, Internal Step Counter Saved at: {step}")
+          return model, epoch, step
+          
+        except Exception as e: 
+          logging.info("\tLoad attempt raised exception: {e}.")
+          return None
+
+      logging.info("\tDirectory does not exist.")
+      return None
+
+    new_save_dir = os.path.join(args_output_dir, f"latest_save")
+    old_save_dir = os.path.join(args_output_dir, f"old_save")
+    for save_dir in [new_save_dir, old_save_dir]:
+      result = try_load_from_dir(save_dir)
+      if result is not None:
+        return result
+    return None
+
+
+
   try_make_output_dir(output_dir)
 
   # Its way ot easy to forget if this is being set by a command line flag
@@ -598,7 +632,7 @@ def main():
   num_train_optimization_steps = None
   train_examples = None
   if args.do_train:
-    train_features = load_mnli_train_features(True, 2000 if args.debug else None)
+    train_features = load_mnli_train_features(args.ouput_dir, True, 2000 if args.debug else None)
     if train_features is None:
       train_examples = load_mnli(True, 2000 if args.debug else None)
       num_examples = len(train_examples)
@@ -621,6 +655,14 @@ def main():
 
   if args.fp16:
     model.half()
+
+  saved_epoch = -1
+  saved_internal_step = -1
+  if args.do_train:
+    saved_result = try_load_latest_saved_model(args.output_dir)
+    if saved_result is not None:
+      model, saved_epoch, saved_internal_step = saved_result
+
   model.to(device)
   if args.local_rank != -1:
     try:
@@ -679,29 +721,19 @@ def main():
   tr_loss = 0
 
   if args.do_train:
-
-    # Create train_features if it does not exist.
-    def create_train_features():
-      train_features: List[InputFeatures] = convert_examples_to_features(
-          train_examples, args.max_seq_length, tokenizer, args.n_processes)
-
+    def get_bias_map():
       if args.which_bias == "mix":
         hypo_bias_map = load_bias("hypo")
         hans_bias_map = load_bias("hans")
-        bias_map = {}
-
-        def compute_entropy(probs, base=3):
-          return -(probs * (np.log(probs) / np.log(base))).sum()
-
-        for key in hypo_bias_map.keys():
-          hypo_ent = compute_entropy(np.exp(hypo_bias_map[key]))
-          hans_ent = compute_entropy(np.exp(hans_bias_map[key]))
-          if hypo_ent < hans_ent:
-            bias_map[key] = hypo_bias_map[key]
-          else:
-            bias_map[key] = hans_bias_map[key]
+        bias_map[key] = hans_bias_map[key]
       else:
         bias_map = load_bias(args.which_bias)
+      return bias_map
+    
+    # Create train_features if it does not exist.
+    def create_train_features(bias_map):
+      train_features: List[InputFeatures] = convert_examples_to_features(
+          train_examples, args.max_seq_length, tokenizer, args.n_processes)
 
       example_map = {}
       for ex in train_examples:
@@ -717,10 +749,11 @@ def main():
             np.float32)
       return train_features
     
+    bias_map = get_bias_map()
     if train_features is None:
-      train_features = create_train_features()
+      train_features = create_train_features(bias_map)
       if not args.debug:
-        save_mnli_train_features(train_features, True)
+        save_mnli_train_features(args.output_dir, train_features, True)
 
     logging.info("***** Running training *****")
     logging.info("  Num examples = %d", len(train_features))
@@ -740,10 +773,16 @@ def main():
 
     training_losses = []
     for epoch_index in trange(int(args.num_train_epochs), desc="Epoch", ncols=100):
+      if saved_epoch > epoch_index:
+        continue
+
       tr_loss = 0
       nb_tr_examples, nb_tr_steps = 0, 0
       pbar = tqdm(train_dataloader, desc="loss", ncols=100)
       for step, batch in enumerate(pbar):
+        if saved_internal_step >= step:
+          continue
+
         new_batch = []
         for t in batch:
           if not isinstance(t, dict):
@@ -867,20 +906,23 @@ def main():
           optimizer.zero_grad()
           global_step += 1
 
-        if args.save_every_x_steps > 0 and global_step % args.save_every_x_steps == 0:
-          logging.info(f"***** Saving model (Epoch: {epoch_index}, Global Step: {global_step}) *****" % name)
+        if args.save_every_x_steps > 0 and (step + 1) % args.save_every_x_steps == 0:
+          last_optimizer_update_step =  ((step + 1) // args.gradient_accumulation_steps) -1
+          logging.info(f"***** Saving model (Epoch: {epoch_index}, Step: {last_optimizer_update_step}) *****")
           
           old_save_dir = os.path.join(output_dir, f"old_save")
           new_save_dir = os.path.join(output_dir, f"latest_save")
-          shutil.move(new_save_dir, old_save_dir)
+          if exists(new_save_dir):
+            shutil.move(new_save_dir, old_save_dir)
 
           save_model(new_save_dir, model, training_losses)
           output_current_step = os.path.join(new_save_dir, "current_step")
           with open(output_current_step, "w") as f:
-            f.write("Epoch, Global Step")
-            f.write(f"{epoch_index}, {global_step})")
+            f.write("[Epoch, Step]\n")
+            f.write(f"[{epoch_index}, {last_optimizer_update_step}]")
 
-          shutil.rmtree(old_save_dir)	
+          if exists(old_save_dir):
+            shutil.rmtree(old_save_dir)	
 
 
       epoch_output_dir = os.path.join(output_dir, f"epoch{epoch_index}")
