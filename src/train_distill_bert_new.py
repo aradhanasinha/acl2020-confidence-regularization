@@ -504,20 +504,57 @@ def main():
   if not args.do_train and not args.do_eval and not args.do_test:
     raise ValueError("At least one of `do_train` or `do_eval` must be True.")
 
-  if os.path.exists(output_dir) and os.listdir(output_dir) and args.do_train:
-    logging.warning(
-        "Output directory ({}) already exists and is not empty.".format(
-            output_dir))
-  if not os.path.exists(output_dir):
-    try:
-      os.makedirs(output_dir)
-    except OSError as e:
-      logging.warning(f"[ANUU DEBUG] OSError: {e}")
-      if e.errno == errno.EEXIST:
-        print("Directory not created.")
+  def try_make_output_dir(output_dir):
+    if os.path.exists(output_dir) and os.listdir(output_dir) and args.do_train:
+      logging.warning(
+          "Output directory ({}) already exists and is not empty.".format(
+              output_dir))
+    if not os.path.exists(output_dir):
+      try:
+        os.makedirs(output_dir)
+      except OSError as e:
         logging.warning(f"[ANUU DEBUG] OSError: {e}")
-      else:
-        raise
+        if e.errno == errno.EEXIST:
+          print("Directory not created.")
+          logging.warning(f"[ANUU DEBUG] OSError: {e}")
+        else:
+          raise
+
+  def save_model(output_dir, model, training_loss_logs):
+    try_make_output_dir(output_dir)
+    # Save a trained model and the associated configuration
+    model_to_save = model.module if hasattr(
+    model, "module") else model  # Only save the model it-self
+    output_model_file = os.path.join(output_dir, WEIGHTS_NAME)
+    torch.save(model_to_save.state_dict(), output_model_file)
+    output_config_file = os.path.join(output_dir, CONFIG_NAME)
+    with open(output_config_file, "w") as f:
+      f.write(model_to_save.config.to_json_string())
+
+    output_train_loss_file = os.path.join(output_dir, "training_loss_over_time")
+    with open(output_train_loss_file, "w") as f:
+      header = "Epoch, Step, CE_loss, Contrastive_loss, Uniform_labeling_loss"
+      f.write(header)
+      for entry in training_losses:
+        f.write(",".join([str(e) for e in entry])+ "\n")
+
+    # Record the args as well
+    arg_dict = {}
+    for arg in vars(args):
+      arg_dict[arg] = getattr(args, arg)
+    with open(join(output_dir, "args.json"), "w") as out_fh:
+      json.dump(arg_dict, out_fh)
+
+  def load_saved_model(output_dir):
+    # Load a trained model and config that you have fine-tuned
+    output_config_file = os.path.join(output_dir, CONFIG_NAME)
+    config = BertConfig(output_config_file)
+    model = BertDistill(config, num_labels=3, loss_fn=loss_fn)
+    output_model_file = os.path.join(output_dir, WEIGHTS_NAME)
+    model.load_state_dict(torch.load(output_model_file))
+    return model
+
+  make_output_dir(output_dir)
 
   # Its way ot easy to forget if this is being set by a command line flag
   if "-uncased" in args.bert_model:
@@ -534,7 +571,7 @@ def main():
   train_examples = None
   if args.do_train:
     logging.warning(f"[ANUU DEBUG] Calling load_mnli")
-    train_examples = load_mnli(True, 2000 if args.debug else None)
+    train_examples = load_mnli(True, 2 if args.debug else None)
     num_train_optimization_steps = int(
         len(train_examples) / args.train_batch_size /
         args.gradient_accumulation_steps) * args.num_train_epochs
@@ -610,7 +647,6 @@ def main():
   tr_loss = 0
 
   if args.do_train:
-    #TODO(aradhanas): Modify the function below to take in create_shuffled_examples and act on it.
     train_features: List[InputFeatures] = convert_examples_to_features(
         train_examples, args.max_seq_length, tokenizer, args.n_processes)
 
@@ -632,6 +668,24 @@ def main():
     else:
       bias_map = load_bias(args.which_bias)
 
+    example_map = {}
+    for ex in train_examples:
+      example_map[ex.id] = ex
+
+    print(train_examples[:5])
+
+    #TODO(aradhanas): Save examples and load again to test. Remove.
+    output_train_examples = os.path.join(args.output_dir, "train_examples.input_features")
+    with open(output_train_examples, "w") as f:
+      f.writelines(train_examples)
+
+    with open(output_train_examples, "r") as f:
+      my_train_examples = [InputFeatures.parse_from_string(x) for x in f.readlines()]
+    
+    print(my_train_examples[:5])
+    assert 1 == 2 # Putting my CS degree to use here <--
+
+
     for fe in train_features:
       fe.bias = bias_map[fe.example_id].astype(np.float32)
     teacher_probs_map = load_teacher_probs(args.custom_teacher)
@@ -639,9 +693,6 @@ def main():
       fe.teacher_probs = np.array(teacher_probs_map[fe.example_id]).astype(
           np.float32)
 
-    example_map = {}
-    for ex in train_examples:
-      example_map[ex.id] = ex
 
     logging.info("***** Running training *****")
     logging.info("  Num examples = %d", len(train_examples))
@@ -788,36 +839,12 @@ def main():
           optimizer.zero_grad()
           global_step += 1
 
-    # Save a trained model and the associated configuration
-    model_to_save = model.module if hasattr(
-        model, "module") else model  # Only save the model it-self
-    output_model_file = os.path.join(output_dir, WEIGHTS_NAME)
-    torch.save(model_to_save.state_dict(), output_model_file)
-    output_config_file = os.path.join(output_dir, CONFIG_NAME)
-    with open(output_config_file, "w") as f:
-      f.write(model_to_save.config.to_json_string())
-    output_train_loss_file = os.path.join(output_dir, "training_loss_over_time")
-    with open(output_train_loss_file, "w") as f:
-      header = "Epoch, Step, CE_loss, Contrastive_loss, Uniform_labeling_loss"
-      f.write(header)
-      for entry in training_losses:
-        f.write(",".join([str(e) for e in entry])+ "\n")
+      epoch_output_dir = os.path.join(output_dir, f"epoch{epoch_index}")
+      save_model(epoch_output_dir, model, training_losses)
 
-    # Record the args as well
-    arg_dict = {}
-    for arg in vars(args):
-      arg_dict[arg] = getattr(args, arg)
-    with open(join(output_dir, "args.json"), "w") as out_fh:
-      json.dump(arg_dict, out_fh)
-
-    # Load a trained model and config that you have fine-tuned
-    config = BertConfig(output_config_file)
-    model = BertDistill(config, num_labels=3, loss_fn=loss_fn)
-    model.load_state_dict(torch.load(output_model_file))
+    output_dir = epoch_output_dir
+    model = load_saved_model(epoch_output_dir)
   else:
-    output_config_file = os.path.join(output_dir, CONFIG_NAME)
-    config = BertConfig.from_json_file(output_config_file)
-    config = BertConfig.from_json_file(output_config_file)
     output_config_file = os.path.join(output_dir, CONFIG_NAME)
     config = BertConfig.from_json_file(output_config_file)
     output_model_file = os.path.join(output_dir, WEIGHTS_NAME)
