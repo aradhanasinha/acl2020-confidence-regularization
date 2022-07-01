@@ -584,7 +584,7 @@ def main():
     logging.info("***** Trying to load saved model. *****")
 
     def try_load_from_dir(save_dir):
-      logging.info("Trying save file: {save_dir}")
+      logging.info(f"Trying save file: {save_dir}")
       if exists(save_dir):
         logging.info("\tDirectory exists.")
         try:
@@ -600,7 +600,7 @@ def main():
           return model, epoch, step
           
         except Exception as e: 
-          logging.info("\tLoad attempt raised exception: {e}.")
+          logging.info(f"\tLoad attempt raised exception: {e}.")
           return None
 
       logging.info("\tDirectory does not exist.")
@@ -632,7 +632,7 @@ def main():
   num_train_optimization_steps = None
   train_examples = None
   if args.do_train:
-    train_features = load_mnli_train_features(args.ouput_dir, True, 2000 if args.debug else None)
+    train_features = load_mnli_train_features(args.output_dir, True, 2000 if args.debug else None)
     if train_features is None:
       train_examples = load_mnli(True, 2000 if args.debug else None)
       num_examples = len(train_examples)
