@@ -17,6 +17,7 @@ from sklearn.metrics import f1_score
 
 import nltk
 import torch
+import ast
 
 nltk.download("punkt")
 
@@ -73,10 +74,9 @@ class InputFeatures(object):
       return f"input_feature(input_ids({str(input_feature.input_ids)}),segment_ids({str(input_feature.segment_ids)}),label_id({str(input_feature.label_id)}))"
     example_id_str = f"example_id({str(self.example_id)})"
     bias_str = f"bias({str(self.bias)})"
-
     entry_reps = []
-    for k, v in self.input_features_dict:
-      if v is list:
+    for k, v in self.input_features_dict.items():
+      if type(v) is list:
         v_list_contents = ",".join([input_feature_to_string(i) for i in v])
         v_str = f"[{v_list_contents}]"
       else:
@@ -86,67 +86,64 @@ class InputFeatures(object):
     input_features_dict_str = f"input_features_dict({entries_str})"
     return f"input_features({example_id_str},{input_features_dict_str},{bias_str})"
   
-@staticmethod
-def parse_from_string(str_rep):
-  def get_item_name_and_val(input_str):
-    assert input_str[-1] == ")"
-    start = input_str.index("(")
-    return input_str[:start], input_str[start+1:-1]
+  @staticmethod
+  def parse_from_string(str_rep):
 
-  def parse_list_of_items(input_str):
-    item_list = []
-    stack = []
-    for i, c in enumerate(input_str):
-      if c == "(":
-        stack.append(i)
-      elif c == ")" and stack:
-        start = stack.pop()
-        if len(stack) == 0:
-          name_start = input_str.rfind(",", 0, start) + 1          
-          item_list.append(input_str[name_start : i])
-    return item_list
-  
-  def input_feature_from_string(input_feature_rep):
-    input_feature_name, input_feature_val = parse_from_string(input_feature_rep)
-    assert input_feature_name == "input_feature"
-    input_ids, segment_ids, label_id = [parse_from_string(x) for x in parse_list_of_items(input_feature_val)]
+    def get_item_name_and_val(input_str):
+      assert input_str[-1] == ")"
+      start = input_str.index("(")
+      return (input_str[:start], input_str[start+1:-1])
 
-    return InputFeature(
-        input_ids=input_ids[1], segment_ids=segment_ids[1], label_id=label_id[1])
+    def parse_list_of_items(input_str):
+      item_list = []
+      stack = []
+      for i, c in enumerate(input_str):
+        if c == "(":
+          stack.append(i)
+        elif c == ")" and stack:
+          start = stack.pop()
+          if len(stack) == 0:
+             name_start = input_str.rfind(",", 0, start) + 1          
+             item_list.append(input_str[name_start : i + 1])
+      return [get_item_name_and_val(i) for i in item_list]
+      
+    def input_feature_from_string(input_feature_rep):
+      input_feature_name, input_feature_val = input_feature_rep
+      assert input_feature_name == "input_feature"
+      input_ids, segment_ids, label_id = [
+        ast.literal_eval(x[1]) for x in parse_list_of_items(input_feature_val)]
+      return InputFeature(input_ids, segment_ids, label_id)
 
-  input_features_name, input_features_val = get_item_name_and_val(str_rep)
-  assert input_features_name == "input_features"
-  example_id_rep, input_features_dict_rep, bias_rep = [
-      get_item_name_and_val(x) for x in parse_list_of_items(input_features_val)
-  ]
-  assert example_id_rep[0] == "example_id"
-  example_id = int(example_id_rep[1])
+    input_features_name, input_features_val = get_item_name_and_val(str_rep)
+    assert input_features_name == "input_features"
+    example_id_rep, input_features_dict_rep, bias_rep = parse_list_of_items(input_features_val)
+    
+    assert example_id_rep[0] == "example_id"
+    example_id = int(example_id_rep[1])
 
-  assert input_features_dict_rep[0] == "input_features_dict"
-  input_features_dict = {}
-  entries_rep = parse_list_of_items(input_features_dict_rep[1])
-  for entry_rep in entries_rep:
-    assert entry_rep[0] == "entry"
-    key_rep, value_rep = parse_list_of_items(entry_rep[1])
-    assert key_rep[0] == "key"
-    key = key_rep[1]
-    assert value_rep[0] == "value"
-    if value[1][0] == "[":
-      val = value[1][1:-1]
-      input_feature = [input_feature_from_string(x) for x in parse_list_of_items(val)]
+    assert input_features_dict_rep[0] == "input_features_dict"
+    input_features_dict = {}
+    entries_rep = parse_list_of_items(input_features_dict_rep[1])
+    for entry_rep in entries_rep:
+      assert entry_rep[0] == "entry"
+      key_rep, value_rep = parse_list_of_items(entry_rep[1])
+      assert key_rep[0] == "key"
+      key = key_rep[1]
+      assert value_rep[0] == "value"
+      if value_rep[1][0] == "[":
+        val = value_rep[1][1:-1]
+        input_feature = [input_feature_from_string(x) for x in parse_list_of_items(val)]
+      else:
+        input_feature = input_feature_from_string(get_item_name_and_val(value_rep[1]))
+      input_features_dict[key] = input_feature
+        
+    assert bias_rep[0] == "bias"
+    if bias_rep[1] == "None":
+      bias = None
     else:
-      input_feature = input_feature_from_string(value[1])
-    input_features_dict[key] = input_feature
-    
-  assert bias_rep[0] == "bias"
-  bias = float(bias_rep[1]) if bias_rep[1] != 'None' else None
+      bias = np.array([float(x) for x in bias_rep[1][1:-1].split(" ") if len(x)>0])
 
-  return Input_Features(example_id, input_features_dict[ORIGINAL_INPUT], input_features_dict[SHUFFLED_INPUT_LIST],
-               input_features_dict[TOKEN_DROPOUT_INPUTS_LIST], bias)
-
-
-
-    
+    return InputFeatures(example_id, input_features_dict[InputFeatures.ORIGINAL_INPUT], input_features_dict[InputFeatures.SHUFFLED_INPUT_LIST], input_features_dict[InputFeatures.TOKEN_DROPOUT_INPUTS_LIST], bias)
 
 def _truncate_seq_pair(tokens_a, tokens_b, max_length):
   """Truncates a sequence pair in place to the maximum length."""

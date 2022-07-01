@@ -554,7 +554,7 @@ def main():
     model.load_state_dict(torch.load(output_model_file))
     return model
 
-  make_output_dir(output_dir)
+  try_make_output_dir(output_dir)
 
   # Its way ot easy to forget if this is being set by a command line flag
   if "-uncased" in args.bert_model:
@@ -647,6 +647,8 @@ def main():
   tr_loss = 0
 
   if args.do_train:
+
+    # Check if train_featuers already exist.
     train_features: List[InputFeatures] = convert_examples_to_features(
         train_examples, args.max_seq_length, tokenizer, args.n_processes)
 
@@ -674,18 +676,6 @@ def main():
 
     print(train_examples[:5])
 
-    #TODO(aradhanas): Save examples and load again to test. Remove.
-    output_train_examples = os.path.join(args.output_dir, "train_examples.input_features")
-    with open(output_train_examples, "w") as f:
-      f.writelines(train_examples)
-
-    with open(output_train_examples, "r") as f:
-      my_train_examples = [InputFeatures.parse_from_string(x) for x in f.readlines()]
-    
-    print(my_train_examples[:5])
-    assert 1 == 2 # Putting my CS degree to use here <--
-
-
     for fe in train_features:
       fe.bias = bias_map[fe.example_id].astype(np.float32)
     teacher_probs_map = load_teacher_probs(args.custom_teacher)
@@ -693,6 +683,14 @@ def main():
       fe.teacher_probs = np.array(teacher_probs_map[fe.example_id]).astype(
           np.float32)
 
+    #TODO(aradhanas): Save examples and load again to test. Remove.
+    print(train_features[:5])
+    output_train_examples = os.path.join(args.output_dir, "train_examples.input_features")
+    with open(output_train_examples, "w") as f:
+      f.writelines([str(x) for x in train_features])
+    with open(output_train_examples, "r") as f:
+      my_train_examples = [InputFeatures.parse_from_string(x) for x in f.readlines()]                                      
+    print(my_train_examples[:5])
 
     logging.info("***** Running training *****")
     logging.info("  Num examples = %d", len(train_examples))
