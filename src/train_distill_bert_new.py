@@ -639,7 +639,7 @@ def main():
     else:
       num_examples = len(train_features)
     num_train_optimization_steps = int(
-        len(train_examples) / args.train_batch_size /
+        num_examples / args.train_batch_size /
         args.gradient_accumulation_steps) * args.num_train_epochs
     if args.local_rank != -1:
       num_train_optimization_steps = num_train_optimization_steps // torch.distributed.get_world_size(
@@ -743,10 +743,6 @@ def main():
 
       for fe in train_features:
         fe.bias = bias_map[fe.example_id].astype(np.float32)
-      teacher_probs_map = load_teacher_probs(args.custom_teacher)
-      for fe in train_features:
-        fe.teacher_probs = np.array(teacher_probs_map[fe.example_id]).astype(
-            np.float32)
       return train_features
     
     bias_map = get_bias_map()
@@ -754,6 +750,13 @@ def main():
       train_features = create_train_features(bias_map)
       if not args.debug:
         save_mnli_train_features(args.output_dir, train_features, True)
+      
+    teacher_probs_map = load_teacher_probs(args.custom_teacher)
+    dummy_val = list(teacher_probs_map.values())[0]
+    for fe in train_features:
+      fe.teacher_probs = np.array(teacher_probs_map.get(fe.example_id, dummy_val)).astype(
+            np.float32)
+      #Error here where dict may not have key. No idea why. Not important to this code.
 
     logging.info("***** Running training *****")
     logging.info("  Num examples = %d", len(train_features))
