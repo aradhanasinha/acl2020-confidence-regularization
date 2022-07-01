@@ -12,6 +12,7 @@ import argparse
 import json
 import logging
 import os
+import shutil
 import random
 from os.path import join, exists
 from typing import List, Dict, Iterable
@@ -135,20 +136,10 @@ def load_hans(n_samples=None,
 
 def ensure_mnli_is_downloaded():
   mnli_source = config.GLUE_SOURCE
-  logging.warning(
-      f"[ANUU DEBUG] ensure_mnli_is_downloaded.mnli_source {mnli_source}")
-  logging.warning(
-      f"[ANUU DEBUG] ensure_mnli_is_downloaded.mnli_source exists {exists(mnli_source)}"
-  )
-  logging.warning(
-      f"[ANUU DEBUG] ensure_mnli_is_downloaded.mnli_source os.listdir {os.listdir(mnli_source)}"
-  )
-
   if exists(mnli_source) and len(os.listdir(mnli_source)) > 0:
     return
   else:
     raise Exception("Download MNLI from Glue and put files under glue_multinli")
-
 
 def load_mnli(is_train, sample=None, custom_path=None) -> List[TextPairExample]:
   ensure_mnli_is_downloaded()
@@ -177,6 +168,38 @@ def load_mnli(is_train, sample=None, custom_path=None) -> List[TextPairExample]:
                         NLI_LABEL_MAP[line[-1].rstrip()]))
   return out
 
+def get_mnli_tf_path(is_train, custom_path=None):
+  if is_train:
+    file_name = "train"
+  elif custom_path is None:
+    file_name = "dev_matched"
+  else:
+    file_name = custom_path
+  return os.path.join(args.output_dir, f"{file_name}.input_features")
+
+
+def save_mnli_train_features(train_features, is_train, custom_path=None):
+  output_path = get_mnli_tf_path(is_train, custom_path)
+  with open(output_train_examples, "w") as f:
+    for t in train_features:
+      f.write(str(t)+"\n")
+  logging.info(f"Saved train_features: {output_path}")
+  return
+    
+def load_mnli_train_features(is_train, sample=None, custom_path=None) -> List[InputFeatures]:
+  output_path = get_mnli_tf_path(is_train, custom_path)
+  if not exists(output_path):
+    return None
+  lines = []
+  with open(output_train_examples, "r") as f:
+    for line in f:
+      lines.append(line.strip())
+
+  if sample:
+    lines = np.random.RandomState(26096781 + sample).choice(
+        lines, sample, replace=False)
+
+  return [InputFeatures.parse_from_string(x) for x in lines]    
 
 def load_teacher_probs(custom_teacher=None):
   if custom_teacher is None:
@@ -303,6 +326,11 @@ def main():
       "than this will be padded.")
   parser.add_argument(
       "--do_train", action="store_true", help="Whether to run training.")
+  parser.add_argument(
+      "--save_every_x_steps", 
+      default=250,
+      type=int,
+      help="Saves model every x steps, if x > 0. Else only saves per epoch.")
   parser.add_argument(
       "--uniform_labeling_wt",
       default=0,
@@ -522,7 +550,7 @@ def main():
 
   def save_model(output_dir, model, training_loss_logs):
     try_make_output_dir(output_dir)
-    # Save a trained model and the associated configuration
+    # Save a trained model and the associated configuration. Overwrites.
     model_to_save = model.module if hasattr(
     model, "module") else model  # Only save the model it-self
     output_model_file = os.path.join(output_dir, WEIGHTS_NAME)
@@ -570,8 +598,12 @@ def main():
   num_train_optimization_steps = None
   train_examples = None
   if args.do_train:
-    logging.warning(f"[ANUU DEBUG] Calling load_mnli")
-    train_examples = load_mnli(True, 2000 if args.debug else None)
+    train_features = load_mnli_train_features(True, 2000 if args.debug else None)
+    if train_features is None:
+      train_examples = load_mnli(True, 2000 if args.debug else None)
+      num_examples = len(train_examples)
+    else:
+      num_examples = len(train_features)
     num_train_optimization_steps = int(
         len(train_examples) / args.train_batch_size /
         args.gradient_accumulation_steps) * args.num_train_epochs
@@ -648,55 +680,50 @@ def main():
 
   if args.do_train:
 
-    # Check if train_featuers already exist.
-    train_features: List[InputFeatures] = convert_examples_to_features(
-        train_examples, args.max_seq_length, tokenizer, args.n_processes)
+    # Create train_features if it does not exist.
+    def create_train_features():
+      train_features: List[InputFeatures] = convert_examples_to_features(
+          train_examples, args.max_seq_length, tokenizer, args.n_processes)
 
-    if args.which_bias == "mix":
-      hypo_bias_map = load_bias("hypo")
-      hans_bias_map = load_bias("hans")
-      bias_map = {}
+      if args.which_bias == "mix":
+        hypo_bias_map = load_bias("hypo")
+        hans_bias_map = load_bias("hans")
+        bias_map = {}
 
-      def compute_entropy(probs, base=3):
-        return -(probs * (np.log(probs) / np.log(base))).sum()
+        def compute_entropy(probs, base=3):
+          return -(probs * (np.log(probs) / np.log(base))).sum()
 
-      for key in hypo_bias_map.keys():
-        hypo_ent = compute_entropy(np.exp(hypo_bias_map[key]))
-        hans_ent = compute_entropy(np.exp(hans_bias_map[key]))
-        if hypo_ent < hans_ent:
-          bias_map[key] = hypo_bias_map[key]
-        else:
-          bias_map[key] = hans_bias_map[key]
-    else:
-      bias_map = load_bias(args.which_bias)
+        for key in hypo_bias_map.keys():
+          hypo_ent = compute_entropy(np.exp(hypo_bias_map[key]))
+          hans_ent = compute_entropy(np.exp(hans_bias_map[key]))
+          if hypo_ent < hans_ent:
+            bias_map[key] = hypo_bias_map[key]
+          else:
+            bias_map[key] = hans_bias_map[key]
+      else:
+        bias_map = load_bias(args.which_bias)
 
-    example_map = {}
-    for ex in train_examples:
-      example_map[ex.id] = ex
+      example_map = {}
+      for ex in train_examples:
+        example_map[ex.id] = ex
 
-    print(train_examples[:5])
+      print(train_examples[:5])
 
-    for fe in train_features:
-      fe.bias = bias_map[fe.example_id].astype(np.float32)
-    teacher_probs_map = load_teacher_probs(args.custom_teacher)
-    for fe in train_features:
-      fe.teacher_probs = np.array(teacher_probs_map[fe.example_id]).astype(
-          np.float32)
-
-    #TODO(aradhanas): Save examples and load again to test. Remove.
-    print(train_features[:5])
-    output_train_examples = os.path.join(args.output_dir, "train_examples.input_features")
-    with open(output_train_examples, "w") as f:
-      for t in train_features:
-        f.write(str(t)+"\n")
-    my_train_examples = []
-    with open(output_train_examples, "r") as f:
-      for line in f:
-        my_train_examples.append(InputFeatures.parse_from_string(line.strip()))                                      
-    print(my_train_examples[:5])
+      for fe in train_features:
+        fe.bias = bias_map[fe.example_id].astype(np.float32)
+      teacher_probs_map = load_teacher_probs(args.custom_teacher)
+      for fe in train_features:
+        fe.teacher_probs = np.array(teacher_probs_map[fe.example_id]).astype(
+            np.float32)
+      return train_features
+    
+    if train_features is None:
+      train_features = create_train_features()
+      if not args.debug:
+        save_mnli_train_features(train_features, True)
 
     logging.info("***** Running training *****")
-    logging.info("  Num examples = %d", len(train_examples))
+    logging.info("  Num examples = %d", len(train_features))
     logging.info("  Batch size = %d", args.train_batch_size)
     logging.info("  Num steps = %d", num_train_optimization_steps)
 
@@ -840,6 +867,22 @@ def main():
           optimizer.zero_grad()
           global_step += 1
 
+        if args.save_every_x_steps > 0 and global_step % args.save_every_x_steps == 0:
+          logging.info(f"***** Saving model (Epoch: {epoch_index}, Global Step: {global_step}) *****" % name)
+          
+          old_save_dir = os.path.join(output_dir, f"old_save")
+          new_save_dir = os.path.join(output_dir, f"latest_save")
+          shutil.move(new_save_dir, old_save_dir)
+
+          save_model(new_save_dir, model, training_losses)
+          output_current_step = os.path.join(new_save_dir, "current_step")
+          with open(output_current_step, "w") as f:
+            f.write("Epoch, Global Step")
+            f.write(f"{epoch_index}, {global_step})")
+
+          shutil.rmtree(old_save_dir)	
+
+
       epoch_output_dir = os.path.join(output_dir, f"epoch{epoch_index}")
       save_model(epoch_output_dir, model, training_losses)
 
@@ -880,9 +923,10 @@ def main():
     logging.info("***** Running evaluation on %s *****" % name)
     logging.info("  Num examples = %d", len(eval_examples))
     logging.info("  Batch size = %d", args.eval_batch_size)
+
     eval_features = convert_examples_to_features(eval_examples,
                                                  args.max_seq_length, tokenizer)
-    #TODO(aradhanas): Update to use the new InputFeatures.
+    
     eval_features.sort()
     all_label_ids = np.array([x.get_original_label_id() for x in eval_features])
     eval_dataloader = build_eval_dataloader(eval_features, args.eval_batch_size)
