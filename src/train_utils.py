@@ -90,7 +90,7 @@ class InputFeatures(object):
   def parse_from_string(str_rep):
 
     def get_item_name_and_val(input_str):
-      assert input_str[-1] == ")"
+      assert input_str[-1] == ")", input_str
       start = input_str.index("(")
       return (input_str[:start], input_str[start+1:-1])
 
@@ -117,7 +117,6 @@ class InputFeatures(object):
     input_features_name, input_features_val = get_item_name_and_val(str_rep)
     assert input_features_name == "input_features"
     example_id_rep, input_features_dict_rep, bias_rep = parse_list_of_items(input_features_val)
-    
     assert example_id_rep[0] == "example_id"
     example_id = int(example_id_rep[1])
 

@@ -571,7 +571,7 @@ def main():
   train_examples = None
   if args.do_train:
     logging.warning(f"[ANUU DEBUG] Calling load_mnli")
-    train_examples = load_mnli(True, 2 if args.debug else None)
+    train_examples = load_mnli(True, 2000 if args.debug else None)
     num_train_optimization_steps = int(
         len(train_examples) / args.train_batch_size /
         args.gradient_accumulation_steps) * args.num_train_epochs
@@ -687,9 +687,12 @@ def main():
     print(train_features[:5])
     output_train_examples = os.path.join(args.output_dir, "train_examples.input_features")
     with open(output_train_examples, "w") as f:
-      f.writelines([str(x) for x in train_features])
+      for t in train_features:
+        f.write(str(t)+"\n")
+    my_train_examples = []
     with open(output_train_examples, "r") as f:
-      my_train_examples = [InputFeatures.parse_from_string(x) for x in f.readlines()]                                      
+      for line in f:
+        my_train_examples.append(InputFeatures.parse_from_string(line.strip()))                                      
     print(my_train_examples[:5])
 
     logging.info("***** Running training *****")
