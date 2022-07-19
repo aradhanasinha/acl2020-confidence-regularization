@@ -197,8 +197,13 @@ def load_mnli_train_features(output_dir, is_train, sample=None, custom_path=None
   if sample:
     lines = np.random.RandomState(26096781 + sample).choice(
         lines, sample, replace=False)
-
-  return [InputFeatures.parse_from_string(x) for x in lines]    
+  logging.info(f'Parsing saved input features. Count = {str(len(lines))}')
+  result = []
+  for i, x in enumerate(lines):
+    result.append(InputFeatures.parse_from_string(x))
+    if (i % 10000 == 1):
+      print(f"\t{str(i)} of  {str(len(lines))}")
+  return result    
 
 def load_teacher_probs(custom_teacher=None):
   if custom_teacher is None:
@@ -593,7 +598,7 @@ def main():
 
           output_current_step = os.path.join(save_dir, "current_step")
           epoch, step = [0, 0]
-          with open(output_current_step, "w") as f:
+          with open(output_current_step, "r") as f:
             f.readline()
             epoch, step = ast.literal_eval(f.readline().strip())
           logging.info(f"\tEpoch: {epoch}, Internal Step Counter Saved at: {step}")
@@ -1101,5 +1106,14 @@ def main():
               str(sub_id), REV_NLI_LABEL_MAP[pred_label_id]))
 
 
+def keep_alive():
+  try:
+    main()
+  except Exception as e:
+    logging.warning("PROGRAM CRASHED. RESTARTING.")
+    logging.warning(f"PRGRAM CRASH ERROR: {e}")
+    keep_alive()
+  return
+
 if __name__ == "__main__":
-  main()
+  keep_alive()
