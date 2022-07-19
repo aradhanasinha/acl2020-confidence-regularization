@@ -575,6 +575,9 @@ def main():
       arg_dict[arg] = getattr(args, arg)
     with open(join(output_dir, "args.json"), "w") as out_fh:
       json.dump(arg_dict, out_fh)
+    
+    # Clear cache maybe. Not used yet.
+    # torch.cuda.empty_cache() # https://discuss.pytorch.org/t/about-torch-cuda-empty-cache/34232
 
   def load_saved_model(output_dir):
     # Load a trained model and config that you have fine-tuned
